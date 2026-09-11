@@ -1,0 +1,16 @@
+# البيئة والأسرار
+.env
+
+# مخرجات التدريب / ملفات الموديل (تُنسخ محلياً ولا تُرفع)
+*.h5
+*.keras
+
+# بايثون
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+
+# Node
+node_modules/
