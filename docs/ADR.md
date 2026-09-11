@@ -346,7 +346,7 @@ START ──► classify_message
                 │
                 ├─ return_request ──► extract_info ──► fetch_policy       ──► craft_response ──► END
                 │
-                ├─ complaint      ──► escalate_ticket                      ──► craft_response ──► END
+                ├─ complaint      ──► extract_info ──► escalate_ticket    ──► craft_response ──► END
                 │
                 └─ other                                                   ──► craft_response ──► END
 ```
@@ -354,6 +354,7 @@ START ──► classify_message
 #### تفاصيل ملزمة
 
 - التوجيه بعد `classify_message` حافة شرطية (conditional edge) مبنية على قيمة `category`.
+- **`complaint` يمرّ بـ `extract_info` قبل `escalate_ticket`** (تصحيح معتمد): حتى إذا ذكر العميل رقم طلبه داخل شكواه، يُلتقط `order_id` ويُخزَّن على التذكرة. بدون هذا التصحيح كانت تذاكر الشكاوى تُخزَّن دائماً بـ `order_id = NULL`.
 - **`fetch_policy` يجلب السياستين معاً:** يستدعي `check_policy("return")` ثم `check_policy("refund")`، ويجمع النتيجتين في قاموس واحد (مفاتيح `return` و `refund`) يُحفظ في `state["tool_result"]` — بدل بناء توجيه ديناميكي معقّد لنوع السياسة. هذا يعطي الـ LLM سياقاً كاملاً في كل مرة (الاسترجاع والإرجاع مترابطان واقعياً).
 - `escalate_ticket` يتطلب `session_id` + `customer_message` + `category` + `order_id` (قد يكون `None`).
 - كل عقدة تكتب سطر log واحد بصيغة موحدة (`[NODE_NAME] input=... output=...`) لتسهيل التتبع (traceability) أثناء الاختبار.
@@ -361,9 +362,19 @@ START ──► classify_message
 
 ### 8.3 الذاكرة (Checkpointer)
 ```python
+import sqlite3
 from langgraph.checkpoint.sqlite import SqliteSaver
-memory = SqliteSaver.from_conn_string("./database/agent_memory.db")
+
+connection = sqlite3.connect("./database/agent_memory.db", check_same_thread=False)
+memory = SqliteSaver(connection)
 ```
+> **ملاحظة تصحيحية (مطبَّقة فعلاً):** الصيغة الأصلية `SqliteSaver.from_conn_string(...)`
+> **لا تعمل** في إصدار `langgraph-checkpoint-sqlite==3.1.1` المثبّت بالمشروع، لأنها
+> تُرجع *مُدير سياق* (context manager) لا كائناً جاهزاً — فالإسناد المباشر يعطي نوعاً
+> خاطئاً بصمت. البديل المعتمد أعلاه هو استخدام المُنشئ `SqliteSaver(connection)`
+> مباشرةً، وهو يعطي نفس النتيجة (ذاكرة دائمة على ملف SQLite). الملف الفعلي:
+> `backend/database/agent_memory.db`.
+
 **قرار:** استخدام `SqliteSaver` لا `MemorySaver` — لأن `MemorySaver` يفقد الحالة عند إعادة تشغيل السيرفر، بينما مشروعنا يحتاج ذاكرة تصمد (متسقة مع كون `chat_messages` أيضاً دائمة بقاعدة البيانات).
 
 ---
@@ -376,12 +387,30 @@ memory = SqliteSaver.from_conn_string("./database/agent_memory.db")
 - لا تخترع أي معلومة غير موجودة بالسياق المزوّد لك أدناه.
 - إذا لم تتوفر معلومة كافية بالسياق، اطلب من العميل التوضيح بدل التخمين.
 - إذا كانت الرسالة شكوى ولم تُحل عبر الأدوات المتاحة، أخبر العميل أنك سجّلت الموضوع للمتابعة.
+- تكلم فقط باللهجة اليمنية العامية. ممنوع منعاً باتاً استخدام أي كلمات أو تعابير مصرية (مثل: يا فندم، دلوقتي، ازيك) أو شامية (مثل: منور، شو أخبارك، هيك). التزم حصراً بأسلوب وتعابير يمنية طبيعية.
+
+أمثلة على الأسلوب المطلوب:
+
+مثال 1:
+العميل: وينه طلبي تاخر كثير
+الرد: حياك الله، متأسفين على التأخير يا غالي. خليني أشوف لك طلبك رقم <order_id> حالاً... طلبك حالياً قيد الشحن ومتوقع يوصلك يوم <date>. لو تأخر أكثر من كذا كلمنا وإحنا في خدمتك.
+
+مثال 2:
+العميل: ابغى استرجع المنتج
+الرد: تمام يا غالي، ما فيه مشكلة. عندنا سياسة استرجاع خلال <days> يوم من الاستلام. تقدر ترسل لنا الطلب وإحنا نكمل لك الإجراء.
 
 السياق المتاح لهذا الرد:
 - نية الرسالة المصنّفة: {category}
 - نتيجة الاستعلام (إن وُجدت): {tool_result}
 - رسالة العميل الأصلية: {customer_message}
 ```
+
+> **ملاحظة تصحيحية (مطبَّقة فعلاً):** أُضيف سطر المنع الصريح للهجات المصرية/الشامية
+> ومثالان قصيران (few-shot) باللهجة اليمنية، بعد أن لوحظ انحراف الـ LLM إلى المصرية/الشامية
+> في اختبار Phase 4. **التنفيذ يستخدم قيماً فعلية في المثالين** (`1002` و `2026-09-15` و `14`)
+> بدل العناصر النائبة `<order_id>`/`<date>`/`<days>`، لأن تركها عناصر نائبة قد يجعل النموذج
+> ينسخها حرفياً في ردوده. `temperature` بقي كما هو (`1.0`) في هذا التعديل، لاختبار أثر
+> التعليمات والأمثلة وحدها أولاً.
 
 **Context Engineering الفعلي هنا:** الحقول الثلاثة بالسياق (`category`, `tool_result`, `customer_message`) **تُبنى ديناميكياً بكل استدعاء** من مخرجات عقد سابقة بالـ Graph — هذا هو التوثيق المطلوب لإثبات أن "بناء السياق" جزء هندسي حقيقي بالمشروع، لا مجرد نص ثابت.
 
