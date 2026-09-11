@@ -68,6 +68,60 @@ python app.py
 
 فحص سريع: `http://localhost:5000/health` يجب أن يعيد `{"status": "ok"}`.
 
+#### توثيق الـ API
+
+**`POST /api/chat`** — يستقبل رسالة عميل ويعيد رد الوكيل، ويحفظ الطرفين في `chat_messages`.
+
+جسم الطلب (JSON):
+
+| الحقل | النوع | مطلوب | الوصف |
+|---|---|---|---|
+| `session_id` | string | نعم | معرّف الجلسة (يُستخدم أيضاً كـ `thread_id` لذاكرة الـ Graph) |
+| `message` | string | نعم | رسالة العميل |
+
+```json
+{ "session_id": "user-123", "message": "وين وصل طلبي رقم 1002؟" }
+```
+
+استجابة النجاح (200):
+
+| الحقل | النوع | الوصف |
+|---|---|---|
+| `session_id` | string | نفس المعرّف المُرسل |
+| `reply` | string | رد الوكيل النصي |
+| `category` | string | الفئة المصنّفة (`complaint` / `order_inquiry` / `return_request` / `other`) |
+| `order_id` | int \| null | رقم الطلب المستخرج |
+| `product_name` | string \| null | المنتج المستخرج |
+| `needs_escalation` | bool | هل أُنشئت تذكرة |
+
+```json
+{
+  "session_id": "user-123",
+  "reply": "حياك الله يا غالي، طلبك رقم 1002 حالياً قيد الشحن...",
+  "category": "order_inquiry",
+  "order_id": 1002,
+  "product_name": "شاحن سريع",
+  "needs_escalation": false
+}
+```
+
+أخطاء (كلها بصيغة `{"error": "..."}`):
+
+| الرمز | السبب |
+|---|---|
+| 400 | جسم ليس JSON، أو `session_id`/`message` مفقود أو فارغ |
+| 500 | `COMMANDCODE_API_KEY` غير موجود بالبيئة، أو خطأ داخلي |
+| 502 | فشل الوصول إلى مزوّد الـ LLM |
+
+مثال (PowerShell، ثلاث رسائل متتالية بنفس الجلسة):
+
+```powershell
+$body = @{ session_id = "user-123"; message = "وين وصل طلبي رقم 1002؟" } | ConvertTo-Json
+Invoke-RestMethod -Uri http://localhost:5000/api/chat -Method Post -ContentType "application/json" -Body $body
+```
+
+> **ملاحظة:** `GET /api/history/<session_id>` (لعرض السجل في الواجهة) يُنفَّذ في Phase 6.
+
 ### 5) الواجهة الأمامية (React)
 
 ```powershell

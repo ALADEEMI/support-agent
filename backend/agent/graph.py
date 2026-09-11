@@ -100,11 +100,17 @@ def call_llm(messages: list[dict]) -> str:
 def classify_message(state: AgentState) -> dict:
     """يصنّف نية الرسالة عبر التطبيع ثم نموذج RNN.
 
+    تُصفَّر هنا الحقول **المشتقّة لكل دورة** (`tool_result` و `needs_escalation`)
+    لأن هذه العقدة أول عقدة في كل مسار، فتفادي تسرّب قيم الدورة السابقة إلى
+    الرد الحالي (مثلاً: ذكر حالة طلب قديم في ردّ على رسالة عامة).
+    لا يُصفَّر `order_id` لأنه مقصود أن يبقى «ملتصقاً» — راجع `state.py` و`extract_info`.
+
     المدخلات:
         state (AgentState): الحالة الواردة (تُقرأ `customer_message`).
 
     المخرجات:
-        dict: تحديث الحالة بمفاتيح `normalized_message` و `category`.
+        dict: تحديث الحالة بمفاتيح `normalized_message`, `category`,
+            و`tool_result=None`, `needs_escalation=False`.
 
     حالات الفشل:
         FileNotFoundError: إذا لم تكن ملفات الموديل موجودة.
@@ -118,14 +124,27 @@ def classify_message(state: AgentState) -> dict:
         {"customer_message": message},
         {"category": category, "confidence": round(confidence, 3)},
     )
-    return {"normalized_message": normalized, "category": category}
+    return {
+        "normalized_message": normalized,
+        "category": category,
+        "tool_result": None,
+        "needs_escalation": False,
+    }
 
 
 def extract_info(state: AgentState) -> dict:
     """يستخرج رقم الطلب واسم المنتج من رسالة العميل.
 
+    **سلوك `order_id` الملتصق (Sticky):** إذا لم تحتوِ الرسالة الحالية على رقم طلب،
+    يُحتفظ بالرقم الموجود في الحالة المسترجعة من الذاكرة بدل طمسه بـ `None` — حتى
+    يستطيع العميل أن يسأل «ومتى يوصل؟» بلا إعادة ذكر الرقم. يُستبدل الرقم فقط عند
+    وجود رقم جديد مختلف في الرسالة.
+
+    (ملاحظة: `product_name` **ليس** ملتصقاً — يُحدَّث بما تُخرجه الرسالة الحالية فقط،
+    حسب القرار المعتمد.)
+
     المدخلات:
-        state (AgentState): الحالة الواردة (تُقرأ `customer_message`).
+        state (AgentState): تُقرأ منها `customer_message` و`order_id` السابق.
 
     المخرجات:
         dict: تحديث الحالة بمفاتيح `order_id` و `product_name`.
@@ -133,13 +152,21 @@ def extract_info(state: AgentState) -> dict:
     حالات الفشل:
         sqlite3.Error: إذا لزمت قراءة قائمة المنتجات من القاعدة وفشلت.
     """
-    info = extractor.extract_info(state["customer_message"])
+    extracted = extractor.extract_info(state["customer_message"])
+    order_id = extracted["order_id"]
+    if order_id is None:
+        order_id = state.get("order_id")
+
     log_node(
         "extract_info",
         {"customer_message": state["customer_message"]},
-        {"order_id": info["order_id"], "product_name": info["product_name"]},
+        {
+            "order_id": order_id,
+            "product_name": extracted["product_name"],
+            "order_id_sticky": extracted["order_id"] is None and order_id is not None,
+        },
     )
-    return {"order_id": info["order_id"], "product_name": info["product_name"]}
+    return {"order_id": order_id, "product_name": extracted["product_name"]}
 
 
 def fetch_order_status(state: AgentState) -> dict:
@@ -389,8 +416,32 @@ def initial_state(session_id: str, customer_message: str) -> AgentState:
     }
 
 
+def turn_input(session_id: str, customer_message: str) -> dict:
+    """يبني مُدخل دورة **لاحقة** (غير الأولى) في جلسة قائمة.
+
+    يُمرَّر حقلان فقط، ويُترك الباقي ليسترجعه الـ checkpointer من الحالة السابقة
+    تلقائياً (ADR قسم 8.3) — بدل تمرير قيم ابتدائية تطمس ما تعلّمه الوكيل
+    (مثل `order_id` الذي ذكره العميل في دورة سابقة).
+
+    المدخلات:
+        session_id (str): معرّف الجلسة.
+        customer_message (str): رسالة العميل الجديدة.
+
+    المخرجات:
+        dict: `{"session_id", "customer_message"}`.
+
+    حالات الفشل:
+        لا يرفع استثناءات.
+    """
+    return {"session_id": session_id, "customer_message": customer_message}
+
+
 def run_turn(session_id: str, customer_message: str) -> AgentState:
     """يشغّل دورة محادثة كاملة عبر الـ Graph بنفس `thread_id`.
+
+    في **الدورة الأولى** للجلسة تُمرَّر حالة ابتدائية كاملة (`initial_state`)،
+    وفي **الدورات اللاحقة** يُمرَّر مُدخل الدورة فقط (`turn_input`) لتُستَرجع بقية
+    الحالة من الذاكرة الدائمة — هذا هو الإصلاح الجذري لاستهلاك الذاكرة فعلياً.
 
     المدخلات:
         session_id (str): معرّف الجلسة (يُستخدم كـ `thread_id` للذاكرة).
@@ -404,7 +455,14 @@ def run_turn(session_id: str, customer_message: str) -> AgentState:
         requests.HTTPError: إذا فشل استدعاء الـ LLM.
     """
     graph = get_graph()
-    return graph.invoke(
-        initial_state(session_id, customer_message),
-        {"configurable": {"thread_id": session_id}},
+    config = {"configurable": {"thread_id": session_id}}
+
+    has_previous_state = bool(graph.get_state(config).values)
+    payload = turn_input(session_id, customer_message) if has_previous_state else initial_state(session_id, customer_message)
+
+    log_node(
+        "run_turn",
+        {"session_id": session_id, "turn": "follow_up" if has_previous_state else "first"},
+        {"restored_from_memory": has_previous_state},
     )
+    return graph.invoke(payload, config)

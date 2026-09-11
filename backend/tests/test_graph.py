@@ -297,3 +297,68 @@ def test_craft_response_uses_dynamic_context(compiled, stub_llm):
     assert "order_inquiry" in user_message["content"]
     assert "1002" in user_message["content"]
     assert "وين وصل طلبي رقم 1002" in user_message["content"]
+
+
+def test_sticky_order_id_across_turns(temp_db, stub_llm, tmp_path, monkeypatch):
+    """إصلاح الذاكرة: الدورة الثانية تسترجع `order_id` من الجلسة بلا إعادة ذكره."""
+    compiled = graph.build_graph(graph.create_checkpointer(tmp_path / "sticky_mem.db"))
+    monkeypatch.setattr(graph, "get_graph", lambda: compiled)
+
+    first = graph.run_turn("sticky-1", "وين وصل طلبي رقم 1002 وهو شاحن سريع؟")
+    assert first["category"] == "order_inquiry"
+    assert first["order_id"] == 1002
+
+    second = graph.run_turn("sticky-1", "طيب متى يوصل بالضبط؟")
+    assert second["category"] == "order_inquiry"
+    assert second["order_id"] == 1002, "لم يُسترجع رقم الطلب من الذاكرة"
+    assert second["tool_result"]["found"] is True
+    assert second["tool_result"]["order_id"] == 1002
+    assert second["tool_result"]["status"] == "قيد الشحن"
+
+
+def test_turn_input_passes_only_new_fields():
+    """`turn_input` يمرّر حقلين فقط، فيُستَرجع الباقي من الذاكرة."""
+    payload = graph.turn_input("s", "مرحبا")
+    assert payload == {"session_id": "s", "customer_message": "مرحبا"}
+
+
+def test_run_turn_logs_first_then_follow_up(temp_db, stub_llm, tmp_path, monkeypatch, capsys):
+    """الدورة الأولى `first` والثانية `follow_up` مع `restored_from_memory=true`."""
+    compiled = graph.build_graph(graph.create_checkpointer(tmp_path / "mem_log.db"))
+    monkeypatch.setattr(graph, "get_graph", lambda: compiled)
+
+    graph.run_turn("log-1", "وين وصل طلبي رقم 1002 وهو شاحن سريع؟")
+    first_output = capsys.readouterr().out
+    assert '[run_turn] input={"session_id": "log-1", "turn": "first"}' in first_output
+    assert '"restored_from_memory": false' in first_output
+
+    graph.run_turn("log-1", "طيب متى يوصل بالضبط؟")
+    second_output = capsys.readouterr().out
+    assert '[run_turn] input={"session_id": "log-1", "turn": "follow_up"}' in second_output
+    assert '"restored_from_memory": true' in second_output
+
+
+def test_tool_result_does_not_leak_between_turns(temp_db, stub_llm, tmp_path, monkeypatch):
+    """نتيجة استعلام دورة سابقة لا تتسرّب إلى دورة لا علاقة لها بالطلبات."""
+    compiled = graph.build_graph(graph.create_checkpointer(tmp_path / "leak_tool.db"))
+    monkeypatch.setattr(graph, "get_graph", lambda: compiled)
+
+    first = graph.run_turn("leak-1", "وين وصل طلبي رقم 1002 وهو شاحن سريع؟")
+    assert first["tool_result"] is not None
+
+    second = graph.run_turn("leak-1", "هلا والله كيف حالكم اليوم")
+    assert second["category"] == "other"
+    assert second["tool_result"] is None, "تسرّبت نتيجة استعلام من دورة سابقة"
+
+
+def test_needs_escalation_does_not_leak_between_turns(temp_db, stub_llm, tmp_path, monkeypatch):
+    """تصعيد دورة سابقة لا يبقى صحيحاً في دورة لا تحتاج تصعيداً."""
+    compiled = graph.build_graph(graph.create_checkpointer(tmp_path / "leak_esc.db"))
+    monkeypatch.setattr(graph, "get_graph", lambda: compiled)
+
+    first = graph.run_turn("leak-2", "الخدمة سيئة جدا وما احد رد علي حسبي الله")
+    assert first["needs_escalation"] is True
+
+    second = graph.run_turn("leak-2", "هلا والله كيف حالكم اليوم")
+    assert second["category"] == "other"
+    assert second["needs_escalation"] is False, "بقي التصعيد من دورة سابقة"
