@@ -128,5 +128,33 @@ def chat():
     )
 
 
+@app.get("/api/history/<session_id>")
+def history(session_id: str):
+    """يرجع سجل المحادثة الدائم لجلسة معيّنة (لعرضه في الواجهة).
+
+    المدخلات:
+        session_id (str): معرّف الجلسة (من مسار الـ URL).
+
+    المخرجات:
+        JSON: `{"session_id": str, "messages": [{"message_id", "sender",
+            "content", "timestamp"}, ...]}` برمز 200. قائمة فارغة إذا لا يوجد سجل.
+
+    حالات الفشل:
+        400: معرّف الجلسة فارغ بعد التنظيف.
+        500: خطأ في قراءة قاعدة البيانات.
+    """
+    cleaned = (session_id or "").strip()
+    if not cleaned:
+        return _error("معرّف الجلسة مطلوب.", 400)
+
+    try:
+        messages = db.get_chat_history(cleaned)
+    except Exception as exc:  # noqa: BLE001 - نُعيد خطأ منظّماً بدل استجابة HTML
+        app.logger.exception("فشل جلب سجل المحادثة")
+        return _error(f"تعذّر جلب سجل المحادثة: {exc}", 500)
+
+    return jsonify({"session_id": cleaned, "messages": messages}), 200
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=config.FLASK_PORT, debug=config.FLASK_ENV == "development")

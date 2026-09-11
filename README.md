@@ -120,7 +120,21 @@ $body = @{ session_id = "user-123"; message = "وين وصل طلبي رقم 100
 Invoke-RestMethod -Uri http://localhost:5000/api/chat -Method Post -ContentType "application/json" -Body $body
 ```
 
-> **ملاحظة:** `GET /api/history/<session_id>` (لعرض السجل في الواجهة) يُنفَّذ في Phase 6.
+**`GET /api/history/<session_id>`** — يرجع سجل المحادثة الدائم لجلسة (لعرضه عند فتح الصفحة).
+
+```json
+{
+  "session_id": "user-123",
+  "messages": [
+    { "message_id": 1, "sender": "customer", "content": "وين وصل طلبي رقم 1002؟", "timestamp": "2026-09-11 17:16:52" },
+    { "message_id": 2, "sender": "agent", "content": "حياك الله يا غالي...", "timestamp": "2026-09-11 17:16:58" }
+  ]
+}
+```
+
+- `sender` إما `customer` أو `agent`، والرسائل مرتّبة زمنياً.
+- جلسة بلا سجل تُرجع `messages: []` برمز 200 (ليست خطأ).
+- رمز 500 عند فشل قراءة قاعدة البيانات.
 
 ### 5) الواجهة الأمامية (React)
 
@@ -129,6 +143,12 @@ cd frontend
 npm install
 npm start
 ```
+
+تُفتح على `http://localhost:3000`. الواجهة تحتفظ بمعرّف الجلسة في `localStorage` وتحمّل السجل
+القديم تلقائياً عند فتح الصفحة. متغيّر `REACT_APP_API_URL` (انظر `frontend/.env.example`) يحدد
+عنوان الـ backend، وقيمته الافتراضية `http://localhost:5000` إن لم يُضبط.
+
+> تنبيه: شغّل الـ backend قبل الواجهة، فبدونه ستفشل الرسائل (وتظهر رسالة خطأ في الواجهة).
 
 ## المراحل
 

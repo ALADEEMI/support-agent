@@ -20,6 +20,7 @@ venv/
 
 # Node
 node_modules/
+build/
 
 # أدوات مساعدة (ليست جزءاً من المشروع)
 .commandcode/

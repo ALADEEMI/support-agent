@@ -215,3 +215,42 @@ def test_failed_turn_still_persists_customer_message(client, monkeypatch, temp_d
     history = db.get_chat_history("s-7")
     assert len(history) == 1
     assert history[0]["sender"] == "customer"
+
+
+def test_history_empty_for_unknown_session(client):
+    """جلسة بلا سجل تُرجع قائمة فارغة برمز 200 (لا خطأ)."""
+    response = client.get("/api/history/never-seen-session")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["session_id"] == "never-seen-session"
+    assert body["messages"] == []
+
+
+def test_history_returns_ordered_messages_after_chat(client):
+    """بعد محادثة، السجل يُرجع الرسائل مرتّبة بنفس ترتيب حدوثها."""
+    client.post("/api/chat", json={"session_id": "s-8", "message": "وين وصل طلبي رقم 1002 وهو شاحن سريع؟"})
+    client.post("/api/chat", json={"session_id": "s-8", "message": "طيب متى يوصل بالضبط؟"})
+
+    response = client.get("/api/history/s-8")
+    assert response.status_code == 200
+
+    messages = response.get_json()["messages"]
+    assert len(messages) == 4
+    assert [m["sender"] for m in messages] == ["customer", "agent", "customer", "agent"]
+    assert messages[0]["content"] == "وين وصل طلبي رقم 1002 وهو شاحن سريع؟"
+    assert messages[1]["content"] == FIXED_REPLY
+    assert messages[2]["content"] == "طيب متى يوصل بالضبط؟"
+    for message in messages:
+        assert set(message.keys()) == {"message_id", "sender", "content", "timestamp"}
+
+
+def test_history_is_isolated_per_session(client):
+    """سجل كل جلسة مستقل عن غيرها."""
+    client.post("/api/chat", json={"session_id": "s-9", "message": "هلا"})
+    client.post("/api/chat", json={"session_id": "s-10", "message": "مرحبا"})
+
+    first = client.get("/api/history/s-9").get_json()["messages"]
+    second = client.get("/api/history/s-10").get_json()["messages"]
+    assert [m["content"] for m in first][0] == "هلا"
+    assert [m["content"] for m in second][0] == "مرحبا"
+    assert len(first) == len(second) == 2
