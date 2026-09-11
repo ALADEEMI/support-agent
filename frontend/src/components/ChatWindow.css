@@ -1,12 +1,18 @@
 /* Phase 6 visual theme — "متجر النخبة" (deep navy + gold).
-   CSS/JSX only: no new dependencies. */
+   CSS/JSX only: no new dependencies.
+
+   Contrast contract:
+   - the page is a dark navy FRAME (static gradient),
+   - the chat body is a LIGHT warm surface with its own slow animated gradient,
+   - navy is used for the header and for the agent's bubbles (light text inside). */
 
 :root {
   --elite-navy: #1b2a4a;
   --elite-navy-dark: #14203a;
-  --elite-navy-deep: #0d1626;
   --elite-gold: #c9a961;
   --elite-gold-bright: #e0c583;
+  --elite-surface: #faf7f0;
+  --elite-surface-tint: #f1ead9;
   --elite-cream: #f7f5f0;
   --elite-ink: #1f2430;
 }
@@ -17,15 +23,8 @@
   align-items: center;
   justify-content: center;
   padding: 24px 16px;
-  background: linear-gradient(135deg, #0d1626, #1b2a4a, #14203a, #0d1626, #1b2a4a);
-  background-size: 400% 400%;
-  animation: gradientShift 28s ease infinite;
-}
-
-@keyframes gradientShift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  /* Static frame: the animation lives inside the light chat body, not here. */
+  background: linear-gradient(160deg, #0d1626, #1b2a4a 55%, #14203a);
 }
 
 .chat-window {
@@ -36,8 +35,8 @@
   flex-direction: column;
   overflow: hidden;
   border-radius: 18px;
-  background: var(--elite-cream);
-  border: 1px solid rgba(201, 169, 97, 0.45);
+  background: var(--elite-surface);
+  border: 1px solid rgba(201, 169, 97, 0.5);
   box-shadow: 0 24px 60px rgba(6, 12, 24, 0.55), 0 0 0 1px rgba(201, 169, 97, 0.12) inset;
 }
 
@@ -102,7 +101,7 @@
   box-shadow: 0 0 0 3px rgba(90, 208, 127, 0.18);
 }
 
-/* ---------- messages ---------- */
+/* ---------- messages (light surface, animated gradient lives HERE) ---------- */
 
 .chat-messages {
   flex: 1;
@@ -111,15 +110,24 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  background-image: radial-gradient(circle at 20% 10%, rgba(201, 169, 97, 0.08), transparent 45%),
-    radial-gradient(circle at 85% 85%, rgba(27, 42, 74, 0.07), transparent 50%);
+  background-color: var(--elite-surface);
+  background-image: radial-gradient(circle at 18% 6%, rgba(201, 169, 97, 0.14), transparent 40%),
+    linear-gradient(140deg, #faf7f0 0%, #f2ead9 25%, #f8f4ec 50%, #edeff5 75%, #faf7f0 100%);
+  background-size: auto, 320% 320%;
+  animation: chatShimmer 30s ease-in-out infinite;
+}
+
+@keyframes chatShimmer {
+  0% { background-position: 0% 0%, 0% 50%; }
+  50% { background-position: 0% 0%, 100% 50%; }
+  100% { background-position: 0% 0%, 0% 50%; }
 }
 
 .chat-empty {
   margin: auto;
   max-width: 260px;
   text-align: center;
-  color: #7a7f8c;
+  color: #8a8578;
   font-size: 14px;
   line-height: 1.9;
 }
@@ -164,7 +172,7 @@
 
 .chat-avatar-customer {
   background: #ffffff;
-  border: 1px solid rgba(27, 42, 74, 0.18);
+  border: 1px solid rgba(27, 42, 74, 0.28);
   color: var(--elite-navy);
 }
 
@@ -174,10 +182,11 @@
   color: var(--elite-gold);
 }
 
+/* Narrower than before: the light surface stays the dominant surface. */
 .chat-bubble-wrap {
   display: flex;
   flex-direction: column;
-  max-width: 76%;
+  max-width: 68%;
   gap: 4px;
 }
 
@@ -190,32 +199,32 @@
 }
 
 .chat-bubble {
-  padding: 11px 15px;
+  padding: 10px 14px;
   border-radius: 16px;
   font-size: 15px;
-  line-height: 1.95;
+  line-height: 1.85;
   white-space: pre-wrap;
   word-break: break-word;
-  box-shadow: 0 2px 8px rgba(15, 22, 38, 0.12);
+  box-shadow: 0 2px 8px rgba(15, 22, 38, 0.13);
 }
 
 .chat-bubble-customer {
   background: #ffffff;
   color: var(--elite-ink);
-  border: 1px solid rgba(27, 42, 74, 0.14);
+  border: 1px solid rgba(27, 42, 74, 0.22);
   border-bottom-right-radius: 6px;
 }
 
 .chat-bubble-agent {
   background: linear-gradient(160deg, var(--elite-navy), var(--elite-navy-dark));
   color: var(--elite-cream);
-  border: 1px solid rgba(201, 169, 97, 0.45);
+  border: 1px solid rgba(201, 169, 97, 0.55);
   border-bottom-left-radius: 6px;
 }
 
 .chat-time {
   font-size: 11px;
-  color: #8b8f9a;
+  color: #948f83;
   padding-inline: 4px;
 }
 
@@ -229,10 +238,10 @@
   border-radius: 16px;
   border-bottom-left-radius: 6px;
   background: linear-gradient(160deg, var(--elite-navy), var(--elite-navy-dark));
-  border: 1px solid rgba(201, 169, 97, 0.45);
-  color: rgba(247, 245, 240, 0.9);
+  border: 1px solid rgba(201, 169, 97, 0.55);
+  color: rgba(247, 245, 240, 0.92);
   font-size: 13px;
-  box-shadow: 0 2px 8px rgba(15, 22, 38, 0.12);
+  box-shadow: 0 2px 8px rgba(15, 22, 38, 0.13);
 }
 
 .chat-dots {
@@ -273,7 +282,7 @@
   gap: 10px;
   padding: 14px 16px;
   background: #ffffff;
-  border-top: 1px solid rgba(27, 42, 74, 0.1);
+  border-top: 1px solid rgba(27, 42, 74, 0.12);
 }
 
 .chat-form input {
@@ -282,8 +291,8 @@
   font-size: 15px;
   font-family: inherit;
   color: var(--elite-ink);
-  background: var(--elite-cream);
-  border: 1.5px solid rgba(27, 42, 74, 0.18);
+  background: var(--elite-surface);
+  border: 1.5px solid rgba(27, 42, 74, 0.2);
   border-radius: 12px;
   outline: none;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
@@ -323,7 +332,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-page { animation: none; }
+  .chat-messages { animation: none; }
   .chat-row { animation: none; }
   .chat-dots span { animation: none; }
 }
