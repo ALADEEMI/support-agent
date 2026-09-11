@@ -7,6 +7,9 @@
 
 # قواعد بيانات SQLite (بيانات مُولَّدة — تُعاد بناؤها بـ database/seed_data.py)
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 
 # بايثون
 __pycache__/
