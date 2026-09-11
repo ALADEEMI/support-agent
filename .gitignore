@@ -5,6 +5,9 @@
 *.h5
 *.keras
 
+# قواعد بيانات SQLite (بيانات مُولَّدة — تُعاد بناؤها بـ database/seed_data.py)
+*.db
+
 # بايثون
 __pycache__/
 *.py[cod]
@@ -14,3 +17,6 @@ venv/
 
 # Node
 node_modules/
+
+# أدوات مساعدة (ليست جزءاً من المشروع)
+.commandcode/

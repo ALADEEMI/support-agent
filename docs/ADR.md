@@ -322,8 +322,42 @@ class AgentState(TypedDict):
     needs_escalation: bool
 ```
 
-### 8.2 تسلسل العقد (Nodes) والشروط
-راجع الرسم بالنقاش السابق (قسم "LangGraph — الـ Graph الكامل") — يُعتمد كما هو دون تغيير، مع إضافة: كل عقدة (node) تكتب سطر log واحد بصيغة موحدة (`[NODE_NAME] input=... output=...`) لتسهيل التتبع (traceability) أثناء الاختبار.
+### 8.2 تسلسل العقد (Nodes) والشروط — البنية الرسمية المعتمدة
+
+> **تحديث:** هذه البنية حُلّت محل الإحالة السابقة إلى «الرسم بالنقاش السابق» (الرسم لم يكن مضمّناً بالوثيقة).
+
+#### العقد (Nodes) — ست عقد
+
+| العقدة | المسؤولية |
+|---|---|
+| `classify_message` | تشغيل النص عبر `normalizer` ثم نموذج RNN للحصول على `category` |
+| `extract_info` | استخراج `order_id` و `product_name` (regex + مطابقة مع المنتجات) |
+| `fetch_order_status` | تنفيذ أداة `check_order_status` |
+| `fetch_policy` | تنفيذ أداة `check_policy` |
+| `escalate_ticket` | تنفيذ أداة `create_ticket` |
+| `craft_response` | استدعاء الـ LLM بالـ System Prompt والسياق المبني ديناميكياً لتوليد `final_response` |
+
+#### الحواف (Edges) ومنطق التوجيه
+
+```
+START ──► classify_message
+                │
+                ├─ order_inquiry  ──► extract_info ──► fetch_order_status ──► craft_response ──► END
+                │
+                ├─ return_request ──► extract_info ──► fetch_policy       ──► craft_response ──► END
+                │
+                ├─ complaint      ──► escalate_ticket                      ──► craft_response ──► END
+                │
+                └─ other                                                   ──► craft_response ──► END
+```
+
+#### تفاصيل ملزمة
+
+- التوجيه بعد `classify_message` حافة شرطية (conditional edge) مبنية على قيمة `category`.
+- **`fetch_policy` يجلب السياستين معاً:** يستدعي `check_policy("return")` ثم `check_policy("refund")`، ويجمع النتيجتين في قاموس واحد (مفاتيح `return` و `refund`) يُحفظ في `state["tool_result"]` — بدل بناء توجيه ديناميكي معقّد لنوع السياسة. هذا يعطي الـ LLM سياقاً كاملاً في كل مرة (الاسترجاع والإرجاع مترابطان واقعياً).
+- `escalate_ticket` يتطلب `session_id` + `customer_message` + `category` + `order_id` (قد يكون `None`).
+- كل عقدة تكتب سطر log واحد بصيغة موحدة (`[NODE_NAME] input=... output=...`) لتسهيل التتبع (traceability) أثناء الاختبار.
+- `craft_response` هي العقدة الطرفية قبل `END` في كل المسارات.
 
 ### 8.3 الذاكرة (Checkpointer)
 ```python
