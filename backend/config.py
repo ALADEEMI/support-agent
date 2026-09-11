@@ -16,9 +16,10 @@ LLM_MODEL = os.getenv("LLM_MODEL") or "deepseek/deepseek-v4.1-flash"
 
 DATABASE_PATH = os.getenv("DATABASE_PATH") or "./database/support.db"
 
-RNN_MODEL_PATH = os.getenv("RNN_MODEL_PATH") or "./model/artifacts/model.h5"
+RNN_MODEL_PATH = os.getenv("RNN_MODEL_PATH") or "./model/artifacts/model.keras"
 TOKENIZER_PATH = os.getenv("TOKENIZER_PATH") or "./model/artifacts/tokenizer.pkl"
 LABEL_ENCODER_PATH = os.getenv("LABEL_ENCODER_PATH") or "./model/artifacts/label_encoder.pkl"
+MODEL_CONFIG_PATH = os.getenv("MODEL_CONFIG_PATH") or "./model/artifacts/config.json"
 
 FLASK_ENV = os.getenv("FLASK_ENV") or "development"
 FLASK_PORT = int(os.getenv("FLASK_PORT") or "5000")

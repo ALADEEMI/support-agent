@@ -1,0 +1,11 @@
+{
+  "max_len": 40,
+  "vocab_size": 8056,
+  "classes": [
+    "complaint",
+    "order_inquiry",
+    "other",
+    "return_request"
+  ],
+  "best_model": "BiLSTM_Baseline"
+}

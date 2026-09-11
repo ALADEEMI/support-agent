@@ -107,13 +107,15 @@ support-agent/
 │   ├── model/
 │   │   ├── rnn_classifier.py      # تحميل الموديل + التوكنايزر + دالة predict()
 │   │   └── artifacts/             # ⚠️ هنا تُنسخ ملفات الموديل بعد التدريب (انظر قسم 6)
-│   │       ├── model.h5
+│   │       ├── model.keras        # الصيغة المعتمدة (وليست .h5) — انظر قسم 6.1
 │   │       ├── tokenizer.pkl
-│   │       └── label_encoder.pkl
+│   │       ├── label_encoder.pkl
+│   │       └── config.json        # إعدادات الاستدلال (max_len, vocab_size, classes) — ينتجها النوتبوك
 │   │
 │   └── tests/
 │       ├── test_extractor.py
 │       ├── test_tools.py
+│       ├── test_model_loading.py  # اختبار تحميل الموديل + sanity check (قسم 6.1 نقطة 5)
 │       ├── test_graph.py
 │       └── test_api.py
 │
@@ -155,9 +157,10 @@ LLM_MODEL=deepseek/deepseek-v4.1-flash
 DATABASE_PATH=./database/support.db
 
 # مسارات ملفات الموديل المدرّب (يجب أن تطابق ما ينتجه training_notebook.ipynb)
-RNN_MODEL_PATH=./model/artifacts/model.h5
+RNN_MODEL_PATH=./model/artifacts/model.keras
 TOKENIZER_PATH=./model/artifacts/tokenizer.pkl
 LABEL_ENCODER_PATH=./model/artifacts/label_encoder.pkl
+MODEL_CONFIG_PATH=./model/artifacts/config.json
 
 # إعدادات Flask
 FLASK_ENV=development
@@ -270,7 +273,7 @@ CREATE INDEX IF NOT EXISTS idx_tickets_session ON tickets(session_id);
 التدريب يتم على **Google Colab** (بيئة منفصلة تماماً عن المشروع)، بينما الـ backend يحتاج **يحمّل** نفس الموديل محلياً. لذلك:
 
 **خطوات الربط الإلزامية (لا يجوز تخطي أي خطوة):**
-1. بعد انتهاء التدريب بـ Colab، يُحفظ الموديل بثلاث ملفات: `model.h5` (أو `.keras`)، `tokenizer.pkl`، `label_encoder.pkl`
+1. بعد انتهاء التدريب بـ Colab، يُحفظ الموديل بأربعة ملفات: `model.keras` (الصيغة المعتمدة)، `tokenizer.pkl`، `label_encoder.pkl`، `config.json`
 2. تُنزَّل الملفات الثلاثة يدوياً من Colab (`files.download()` أو حفظ بـ Google Drive)
 3. تُنسخ **حرفياً** إلى المسار: `backend/model/artifacts/`
 4. **يجب أن يكون منطق التطبيع (normalization) المستخدم بالتدريب (داخل النوتبوك) مطابقاً تماماً** لملف `backend/agent/normalizer.py` بالمشروع — أي اختلاف بسيط (مثلاً نسيان توحيد الهمزات بأحد الطرفين) يكسر دقة النموذج وقت الاستدلال (inference) دون أي رسالة خطأ ظاهرة. **هذه من أكثر نقاط الفشل الصامتة شيوعاً في مشاريع NLP — يجب اختبارها صراحة بـ Phase 4 (راجع أدناه).**
@@ -416,6 +419,14 @@ memory = SqliteSaver.from_conn_string("./database/agent_memory.db")
 
 ## 12. أسئلة مفتوحة يجب حسمها قبل Phase 0 (أو تُترك بقيم افتراضية معلنة)
 
-- [ ] اسم المتجر الوهمي وقائمة المنتجات النهائية (10-15 منتج) — افتراضي إن لم يُحدَّد: "متجر النخبة" بمنتجات إلكترونية عامة
-- [ ] اللهجة الدقيقة (خليجية بحتة / يمنية بحتة / مزيج) — تم تحديدها سابقاً كـ "عامية واقعية" عامة، يُفضَّل تحديد لهجة واحدة مهيمنة لتقليل تشتت المفردات بالتدريب
-- [ ] حجم الداتا سيت النهائي المستهدف (اقتراح: 4000-6000 صف)
+> **تم حسم الأسئلة التالية (تحديث لاحق — بعد Phase 1/2):**
+>
+> - [x] **اسم المتجر الوهمي**: «متجر النخبة».
+> - [x] **قائمة المنتجات النهائية**: قائمة النوتبوك ذات الـ 15 منتجاً (`PRODUCTS` داخل `training_notebook.ipynb`) هي **المرجع النهائي (canonical)** وهي التي وُلِّدت عليها الداتا سيت فعلياً.
+>   - ⚠️ هذا **ينقض** القرار الأسبق في Phase 0 («إلكترونيات — 12 منتجاً»)؛ سُجِّل الانقضاء صراحةً هنا وفي `PROGRESS.md`.
+>   - القائمة: سماعة بلوتوث، شاحن سريع، ساعة ذكية، جوال سامسونج، لابتوب ديل، طقم مطبخ، مكواة بخار، مكنسة كهربائية، كرسي مكتب، طاولة قهوة، حذاء رياضي، شنطة ظهر، نظارة شمسية، عطر رجالي، بطانية شتوية.
+>   - تُستخدم كما هي في بيانات البذور (Phase 3) وفي أعمدة `product_name` بالداتا سيت.
+> - [x] **اللهجة**: يمنية مهيمنة (مع تنوع عامي خليجي واقعي كما في برومبت النوتبوك).
+> - [x] **حجم الداتا سيت النهائي**: 4000 صف (1000 لكل فئة).
+> - [x] **صيغة ملفات الموديل**: `model.keras` + `config.json` (وليس `.h5`) — انظر قسم 2 و 3 و 6.1.
+> - [ ] **متبقٍ (فجوة حرجة)**: تسلسل عقد LangGraph وحوافه الشرطية (قسم 8.2 يحيل إلى رسم غير مضمّن في الوثيقة) — مطلوب قبل Phase 4.
