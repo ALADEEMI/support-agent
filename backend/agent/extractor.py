@@ -20,6 +20,25 @@ KEYWORD_ORDER_PATTERN = re.compile(
 )
 BARE_ORDER_PATTERN = re.compile(r"(?<!\d)(\d{4})(?!\d)")
 
+# رقم تذكرة مذكور صراحةً (يُطابق النص **بعد** التطبيع، لذا «التذكره» لا «التذكرة»).
+TICKET_REFERENCE_PATTERN = re.compile(
+    r"(?:رقم\s*)?(?:التذكره|تذكره|التذكرة|تذكرة|ticket)\D{0,12}?(\d{1,6})"
+)
+
+# كلمات مفتاحية لأسئلة السياسات — بصيغتها **بعد التطبيع** (ة→ه، إأآ→ا).
+POLICY_KEYWORDS = (
+    "سياس",      # سياسة / سياسات
+    "ارجاع",     # الإرجاع / ارجاع
+    "استرجاع",
+    "استبدال",
+    "ترجيع",
+    "شحن",       # الشحن / شحن
+    "توصيل",
+    "ضمان",
+    "شروط",
+    "رسوم",
+)
+
 _NON_WORD = re.compile(r"[^\w\s]", re.UNICODE)
 
 
@@ -85,6 +104,50 @@ def extract_order_id(text: str) -> int | None:
         return int(bare_match.group(1))
 
     return None
+
+
+def extract_ticket_reference(text: str) -> int | None:
+    """يستخرج رقم تذكرة ذكره العميل صراحةً (مثل «التذكرة 16» أو «تفاصيل التذكره 16»).
+
+    المدخلات:
+        text (str): رسالة العميل الخام.
+
+    المخرجات:
+        int | None: رقم التذكرة إذا ذُكرت، وإلا `None`.
+
+    حالات الفشل:
+        لا يرفع استثناءات — أي مدخل غير نصي يعطي `None`.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+
+    normalized = normalize_arabic(text)
+    match = TICKET_REFERENCE_PATTERN.search(normalized)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def is_policy_question(text: str) -> bool:
+    """يتحقق إن كانت الرسالة سؤالاً عن سياسة/شروط المتجر (شحن، إرجاع، استبدال...).
+
+    الكشف **بالكلمات المفتاحية** لا بالنموذج، لأن النموذج لا يملك فئة «سياسات»
+    وكان يصنّف هذه الأسئلة أحياناً `complaint` أو `other` (راجع ADR قسم 8.2).
+
+    المدخلات:
+        text (str): رسالة العميل الخام.
+
+    المخرجات:
+        bool: `True` إذا وُجدت كلمة مفتاحية لسياسة، وإلا `False`.
+
+    حالات الفشل:
+        لا يرفع استثناءات — أي مدخل غير نصي يعطي `False`.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return False
+
+    normalized = normalize_arabic(text)
+    return any(keyword in normalized for keyword in POLICY_KEYWORDS)
 
 
 def extract_product_name(text: str, product_names: list[str] | None = None) -> str | None:

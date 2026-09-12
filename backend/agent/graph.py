@@ -1,15 +1,15 @@
 """تعريف LangGraph: العقد الست والحواف الشرطية (ADR قسم 8.2)، والذاكرة الدائمة.
 
-تسلسل التنفيذ:
-    START → classify_message
-        ├─ order_inquiry  → extract_info → fetch_order_status → craft_response → END
-        ├─ return_request → extract_info → fetch_policy       → craft_response → END
-        ├─ complaint      → extract_info → escalate_ticket    → craft_response → END
-        └─ other          → craft_response                    → END
-
-ملاحظة (تصحيح بموافقة صاحب المشروع): مسار `complaint` يمرّ بـ `extract_info` قبل
-`escalate_ticket` حتى يُلتقط `order_id` ويُخزَّن على التذكرة إن ذكره العميل — بدل
-تخطّي الاستخراج مباشرة إلى التصعيد.
+تسلسل التنفيذ (محدَّث — راجع ADR قسم 8.2):
+    START → classify_message → extract_info
+        │            (التصنيف؛ والثقة < INTENT_CONFIDENCE_THRESHOLD تجعله `other`)
+        │            (extract_info يطبّق سياسة الالتصاق المحدود لرقم الطلب)
+        └─ ثم حافة شرطية واحدة:
+            ├─ رقم تذكرة مذكور            → craft_response
+            ├─ return_request / سياسة      → fetch_policy    → craft_response
+            ├─ complaint / تصعيد صريح      → escalate_ticket → craft_response
+            ├─ order_inquiry               → fetch_order_status → craft_response
+            └─ غير ذلك (other / ثقة منخفضة) → craft_response
 
 كل عقدة تكتب سطر log واحد بصيغة موحدة: `[NODE_NAME] input=... output=...`.
 
@@ -32,6 +32,7 @@ import config
 from agent import extractor, prompts, tools
 from agent.normalizer import normalize_arabic
 from agent.state import AgentState
+from database import db
 from model import rnn_classifier
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -118,55 +119,103 @@ def classify_message(state: AgentState) -> dict:
     """
     message = state["customer_message"]
     normalized = normalize_arabic(message)
-    category, confidence = rnn_classifier.predict(message)
+    raw_category, confidence = rnn_classifier.predict(message)
+
+    # Task 1: لا يُعتمد تصنيف منخفض الثقة إطلاقاً — يُحوَّل إلى `other` فتذهب
+    # الرسالة إلى ردّ حواري (طلب توضيح) بدل تنفيذ أدوات مبنية على تخمين.
+    low_confidence = confidence < config.INTENT_CONFIDENCE_THRESHOLD
+    category = OTHER if low_confidence else raw_category
+
+    policy_question = extractor.is_policy_question(message)
+
     log_node(
         "classify_message",
         {"customer_message": message},
-        {"category": category, "confidence": round(confidence, 3)},
+        {
+            "raw_category": raw_category,
+            "category": category,
+            "confidence": round(confidence, 3),
+            "threshold": config.INTENT_CONFIDENCE_THRESHOLD,
+            "low_confidence": low_confidence,
+            "policy_question": policy_question,
+        },
     )
     return {
         "normalized_message": normalized,
         "category": category,
+        "intent_confidence": confidence,
+        "low_confidence": low_confidence,
+        "policy_question": policy_question,
         "tool_result": None,
         "needs_escalation": False,
     }
 
 
 def extract_info(state: AgentState) -> dict:
-    """يستخرج رقم الطلب واسم المنتج من رسالة العميل.
+    """يستخرج رقم الطلب واسم المنتج ورقم التذكرة، ويطبّق سياسة «الالتصاق المحدود».
 
-    **سلوك `order_id` الملتصق (Sticky):** إذا لم تحتوِ الرسالة الحالية على رقم طلب،
-    يُحتفظ بالرقم الموجود في الحالة المسترجعة من الذاكرة بدل طمسه بـ `None` — حتى
-    يستطيع العميل أن يسأل «ومتى يوصل؟» بلا إعادة ذكر الرقم. يُستبدل الرقم فقط عند
-    وجود رقم جديد مختلف في الرسالة.
+    **سياسة `order_id` (Task 3 — التصاق محدود بانتهاء):**
+        - إذا ذكر العميل **رقم تذكرة** صراحةً (مثل «التذكرة 16») => يُمسح `order_id`
+          ولا يُستبدل برقم جديد (سؤال عن تذكرة ليس سؤالاً عن طلب).
+        - وإلا إذا ورد **رقم طلب** في الرسالة => يُعتمد فوراً وتُصفَّر عدّاد الالتصاق.
+        - وإلا إذا كانت الرسالة **سؤال سياسة** => لا يُستعار رقم قديم (لا معنى له هناك).
+        - وإلا إذا كان هناك رقم سابق ولم ينتهِ عمر التصاقه
+          (`order_id_sticky_turns < config.MAX_STICKY_ORDER_TURNS`) => يُستعار
+          **لدورة واحدة** ثم ينتهي.
+        - خلاف ذلك => يُمسح الرقم.
 
-    (ملاحظة: `product_name` **ليس** ملتصقاً — يُحدَّث بما تُخرجه الرسالة الحالية فقط،
-    حسب القرار المعتمد.)
+    (ملاحظة: `product_name` **ليس** ملتصقاً — يُحدَّث بما تُخرجه الرسالة الحالية فقط.)
 
     المدخلات:
-        state (AgentState): تُقرأ منها `customer_message` و`order_id` السابق.
+        state (AgentState): تُقرأ منها `customer_message`, `order_id`,
+            `order_id_sticky_turns`, `policy_question`.
 
     المخرجات:
-        dict: تحديث الحالة بمفاتيح `order_id` و `product_name`.
+        dict: تحديث الحالة بمفاتيح `order_id`, `product_name`, `ticket_reference`,
+            `order_id_sticky_turns`.
 
     حالات الفشل:
         sqlite3.Error: إذا لزمت قراءة قائمة المنتجات من القاعدة وفشلت.
     """
-    extracted = extractor.extract_info(state["customer_message"])
-    order_id = extracted["order_id"]
-    if order_id is None:
-        order_id = state.get("order_id")
+    message = state["customer_message"]
+    ticket_reference = extractor.extract_ticket_reference(message)
+    fresh_order = extractor.extract_order_id(message)
+    previous_order = state.get("order_id")
+    previous_turns = state.get("order_id_sticky_turns", 0) or 0
+    category = state.get("category", OTHER)
+
+    if ticket_reference is not None:
+        order_id, sticky_turns, resolution = None, 0, "ticket_reference_clears_order"
+    elif fresh_order is not None:
+        order_id, sticky_turns, resolution = fresh_order, 0, "fresh_order_id"
+    elif category not in (ORDER_INQUIRY, COMPLAINT):
+        # الالتصاق مخصّص للفئتين اللتين تستهلكان رقم الطلب فعلاً؛ أي فئة أخرى
+        # (سياسات/إرجاع/محادثة عامة) تُمسح فيها القيمة القديمة فوراً.
+        order_id, sticky_turns, resolution = None, 0, "category_does_not_reuse_order"
+    elif previous_order is not None and previous_turns < config.MAX_STICKY_ORDER_TURNS:
+        order_id, sticky_turns, resolution = previous_order, previous_turns + 1, "sticky_reused"
+    else:
+        order_id, sticky_turns, resolution = None, 0, "sticky_expired"
+
+    product_name = extractor.extract_product_name(message)
 
     log_node(
         "extract_info",
-        {"customer_message": state["customer_message"]},
+        {"customer_message": message, "previous_order_id": previous_order},
         {
             "order_id": order_id,
-            "product_name": extracted["product_name"],
-            "order_id_sticky": extracted["order_id"] is None and order_id is not None,
+            "product_name": product_name,
+            "ticket_reference": ticket_reference,
+            "order_id_sticky": resolution == "sticky_reused",
+            "order_id_resolution": resolution,
         },
     )
-    return {"order_id": order_id, "product_name": extracted["product_name"]}
+    return {
+        "order_id": order_id,
+        "product_name": product_name,
+        "ticket_reference": ticket_reference,
+        "order_id_sticky_turns": sticky_turns,
+    }
 
 
 def fetch_order_status(state: AgentState) -> dict:
@@ -191,17 +240,18 @@ def fetch_order_status(state: AgentState) -> dict:
 
 
 def fetch_policy(state: AgentState) -> dict:
-    """ينفّذ أداة `check_policy` للسياستين معاً: `return` ثم `refund`.
+    """ينفّذ أداة `check_policy` للسياسات الثلاث: `return` ثم `refund` ثم `shipping`.
 
-    القرار (بموافقة صاحب المشروع): تُجلب السياستان في نداء واحد بلا توجيه ديناميكي
-    معقّد، لأن الاسترجاع والإرجاع مترابطان واقعياً، فيحصل الـ LLM على سياق كامل.
+    القرار: تُجلب السياسات معاً في نداء واحد بدل توجيه ديناميكي معقّد، فيحصل الـ LLM
+    على سياق كامل. **أُضيفت سياسة `shipping`** لأن أسئلة الشحن/التوصيل كانت تُصنَّف
+    `other` فلا تُجلب لها أي سياسة (راجع ADR قسم 8.2 — Task 4).
 
     المدخلات:
         state (AgentState): الحالة الواردة (لا تُستخدم حقولها هنا).
 
     المخرجات:
         dict: تحديث الحالة بمفتاح `tool_result` على شكل
-            `{'return': {...}, 'refund': {...}}`.
+            `{'return': {...}, 'refund': {...}, 'shipping': {...}}`.
 
     حالات الفشل:
         لا يرفع استثناءات — فشل أي أداة يعود داخل نتيجتها.
@@ -209,43 +259,110 @@ def fetch_policy(state: AgentState) -> dict:
     result = {
         "return": tools.check_policy("return"),
         "refund": tools.check_policy("refund"),
+        "shipping": tools.check_policy("shipping"),
     }
-    log_node("fetch_policy", {"policy_types": ["return", "refund"]}, {"tool_result": result})
+    log_node(
+        "fetch_policy",
+        {"policy_types": ["return", "refund", "shipping"]},
+        {"tool_result": result},
+    )
     return {"tool_result": result}
 
 
 def escalate_ticket(state: AgentState) -> dict:
-    """ينشئ تذكرة متابعة عبر أداة `create_ticket`.
+    """ينشئ تذكرة متابعة **فقط** إذا استوفت الرسالة شروط التصعيد (Task 2).
+
+    لا تُنشئ العقدة تذكرة تلقائياً لمجرد أن الفئة `complaint`: القرار يمرّ عبر
+    `tools.should_escalate` (طلب صريح / وصف شكوى حقيقي / لا تذكرة مفتوحة سابقاً).
+    عند التخطّي يُعاد `reason` داخل `tool_result` ليعرف الـ LLM أنه **لم** يُسجَّل
+    شيء وأن عليه أن يعرض التصعيد بدل ادّعائه.
 
     المدخلات:
         state (AgentState): تُقرأ منها `session_id`, `customer_message`,
-            `category`, `order_id`.
+            `category`, `order_id`, `ticket_id`.
 
     المخرجات:
-        dict: تحديث الحالة بمفتاحَي `tool_result` و `needs_escalation`.
+        dict: تحديث الحالة بمفاتيح `tool_result` و `needs_escalation`
+            (و`ticket_id` عند الإنشاء فقط).
 
     حالات الفشل:
         لا يرفع استثناءات — فشل الأداة يعود داخل `tool_result`.
     """
+    allowed, reason = tools.should_escalate(
+        state["customer_message"],
+        state.get("category", ""),
+        already_escalated=state.get("ticket_id") is not None,
+    )
+
+    if not allowed:
+        result = {"created": False, "skipped": True, "reason": reason}
+        log_node(
+            "escalate_ticket",
+            {
+                "session_id": state["session_id"],
+                "category": state.get("category"),
+                "already_escalated": state.get("ticket_id") is not None,
+            },
+            {"tool_result": result},
+        )
+        return {"tool_result": result, "needs_escalation": False}
+
     result = tools.create_ticket(
         state["session_id"],
         state["customer_message"],
         state["category"],
         state.get("order_id"),
     )
+    created = bool(result.get("created"))
     log_node(
         "escalate_ticket",
-        {"session_id": state["session_id"], "category": state["category"], "order_id": state.get("order_id")},
+        {
+            "session_id": state["session_id"],
+            "category": state.get("category"),
+            "order_id": state.get("order_id"),
+            "reason": reason,
+        },
         {"tool_result": result},
     )
-    return {"tool_result": result, "needs_escalation": bool(result.get("created"))}
+    update = {"tool_result": result, "needs_escalation": created}
+    if created:
+        update["ticket_id"] = result.get("ticket_id")
+    return update
+
+
+def recent_history(session_id: str, current_message: str, max_messages: int = 6) -> list[dict]:
+    """يجلب آخر رسائل المحادثة الدائمة لاستخدامها كذاكرة قصيرة المدى (Task 4).
+
+    يُستثنى **آخر صف** إن كان هو رسالة العميل الحالية (لأن `app.py` يحفظها قبل
+    تشغيل الرسم)، مع بقاء السلوك صحيحاً لو لم تكن محفوظة أصلاً (تشغيل الرسم مباشرة).
+
+    المدخلات:
+        session_id (str): معرّف الجلسة.
+        current_message (str): رسالة العميل الحالية.
+        max_messages (int): أقصى عدد رسائل مُعادة (افتراضياً 6 = آخر 3 دورات).
+
+    المخرجات:
+        list[dict]: رسائل مرتّبة زمنياً بمفاتيح `sender` و `content`.
+
+    حالات الفشل:
+        لا يرفع استثناءات — أي خطأ قراءة يعيد قائمة فارغة.
+    """
+    try:
+        rows = db.get_chat_history(session_id)
+    except Exception:  # noqa: BLE001 - الذاكرة القصيرة تحسين لا شرط للتشغيل
+        return []
+
+    if rows and rows[-1].get("sender") == "customer" and rows[-1].get("content") == current_message:
+        rows = rows[:-1]
+    return rows[-max_messages:]
 
 
 def craft_response(state: AgentState) -> dict:
-    """يبني السياق ديناميكياً ويستدعي الـ LLM لتوليد الرد النهائي.
+    """يبني السياق ديناميكياً (مع ذاكرة المحادثة) ويستدعي الـ LLM لتوليد الرد.
 
     المدخلات:
-        state (AgentState): تُقرأ منها `category`, `tool_result`, `customer_message`.
+        state (AgentState): تُقرأ منها `category`, `tool_result`,
+            `customer_message`, `session_id`, `low_confidence`.
 
     المخرجات:
         dict: تحديث الحالة بمفتاح `final_response`.
@@ -255,60 +372,66 @@ def craft_response(state: AgentState) -> dict:
         requests.HTTPError: إذا فشل استدعاء المزوّد — يُرفع الخطأ كما هو بدل
             إخفائه (ممنوع أي fallback صامت).
     """
+    history = recent_history(state["session_id"], state["customer_message"])
     messages = prompts.build_messages(
         state["category"],
         state.get("tool_result"),
         state["customer_message"],
+        history=history,
+        low_confidence=bool(state.get("low_confidence")),
     )
     response_text = call_llm(messages)
     log_node(
         "craft_response",
-        {"category": state["category"], "tool_result": state.get("tool_result")},
+        {
+            "category": state["category"],
+            "tool_result": state.get("tool_result"),
+            "history_messages": len(history),
+            "low_confidence": bool(state.get("low_confidence")),
+        },
         {"final_response": response_text},
     )
     return {"final_response": response_text}
 
 
-def route_after_classify(state: AgentState) -> str:
-    """يحدد العقدة التالية بعد التصنيف بناءً على الفئة.
-
-    كل الفئات — بما فيها `complaint` — تمرّ بـ `extract_info` أولاً حتى تُلتقط
-    معلومات الطلب إن ذُكرت، ما عدا `other` التي تذهب مباشرة لتوليد الرد.
-
-    المدخلات:
-        state (AgentState): تُقرأ منها `category`.
-
-    المخرجات:
-        str: اسم العقدة التالية (`extract_info` أو `craft_response`).
-
-    حالات الفشل:
-        لا يرفع استثناءات — أي فئة غير معروفة تُوجَّه إلى `craft_response`.
-    """
-    category = state["category"]
-    if category in (ORDER_INQUIRY, RETURN_REQUEST, COMPLAINT):
-        return "extract_info"
-    return "craft_response"
-
-
 def route_after_extract(state: AgentState) -> str:
-    """يحدد أي عقدة تُنفَّذ بعد الاستخراج بناءً على الفئة.
+    """يحدد العقدة التالية بعد الاستخراج (الحافة الشرطية الوحيدة في الرسم).
+
+    كل دورات المحادثة تمرّ بـ `extract_info` أولاً، لأنه هو الذي يطبّق سياسة
+    «الالتصاق المحدود» لرقم الطلب؛ ثم يقرّر هذا المُوجّه المسار:
+
+        1. ذكر رقم تذكرة → `craft_response` (لا استعلام طلب ولا سياسات).
+        2. طلب إرجاع، أو سؤال سياسة مؤكَّد نصياً → `fetch_policy`.
+        3. شكوى، أو طلب تصعيد صريح → `escalate_ticket` (وهي التي تقرّر الإنشاء أو التخطّي).
+        4. استفسار طلب → `fetch_order_status`.
+        5. غير ذلك (بما فيه الثقة المنخفضة بلا دليل نصي) → `craft_response`.
+
+    بهذا لا تصل رسالة منخفضة الثقة إلى عقدة تشغيلية، لأن تصنيفها يُحوَّل إلى `other`
+    ولا يوجد معها دليل نصي (سياسة/تصعيد صريح/رقم تذكرة).
 
     المدخلات:
-        state (AgentState): تُقرأ منها `category`.
+        state (AgentState): تُقرأ منها `category`, `policy_question`,
+            `ticket_reference`, `customer_message`.
 
     المخرجات:
-        str: `fetch_policy` لطلبات الإرجاع، `escalate_ticket` للشكاوى،
-            وإلا `fetch_order_status`.
+        str: اسم العقدة التالية.
 
     حالات الفشل:
         لا يرفع استثناءات.
     """
+    if state.get("ticket_reference") is not None:
+        return "craft_response"
+
     category = state["category"]
-    if category == RETURN_REQUEST:
+    message = state.get("customer_message", "")
+
+    if category == RETURN_REQUEST or state.get("policy_question"):
         return "fetch_policy"
-    if category == COMPLAINT:
+    if category == COMPLAINT or tools.has_explicit_escalation_request(message):
         return "escalate_ticket"
-    return "fetch_order_status"
+    if category == ORDER_INQUIRY:
+        return "fetch_order_status"
+    return "craft_response"
 
 
 def build_graph(checkpointer=None):
@@ -334,15 +457,11 @@ def build_graph(checkpointer=None):
     builder.add_node("craft_response", craft_response)
 
     builder.add_edge(START, "classify_message")
-    builder.add_conditional_edges(
-        "classify_message",
-        route_after_classify,
-        ["extract_info", "craft_response"],
-    )
+    builder.add_edge("classify_message", "extract_info")
     builder.add_conditional_edges(
         "extract_info",
         route_after_extract,
-        ["fetch_order_status", "fetch_policy", "escalate_ticket"],
+        ["fetch_order_status", "fetch_policy", "escalate_ticket", "craft_response"],
     )
     builder.add_edge("fetch_order_status", "craft_response")
     builder.add_edge("fetch_policy", "craft_response")
@@ -408,8 +527,14 @@ def initial_state(session_id: str, customer_message: str) -> AgentState:
         "customer_message": customer_message,
         "normalized_message": "",
         "category": "",
+        "intent_confidence": 0.0,
+        "low_confidence": False,
+        "policy_question": False,
         "order_id": None,
         "product_name": None,
+        "ticket_reference": None,
+        "ticket_id": None,
+        "order_id_sticky_turns": 0,
         "tool_result": None,
         "final_response": "",
         "needs_escalation": False,

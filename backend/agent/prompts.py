@@ -1,9 +1,8 @@
 """System Prompt وقوالب بناء الـ context (Context Engineering).
 
-النسخة المعتمدة من docs/ADR.md قسم 9. الحقول الثلاثة (`category`، `tool_result`،
-`customer_message`) تُبنى **ديناميكياً في كل استدعاء** من مخرجات عقد الـ Graph
-السابقة — هذا هو الدليل العملي على أن بناء السياق جزء هندسي حقيقي بالمشروع،
-لا مجرد نص ثابت.
+المرجع: docs/ADR.md قسم 9. السياق يُبنى **ديناميكياً في كل استدعاء** من مخرجات
+عقد الـ Graph السابقة، ويشمل الآن **ذاكرة المحادثة القصيرة** (آخر دورات) لتفادي
+تناقض الوكيل مع نفسه (راجع Task 4 في إصلاح المعمار).
 """
 
 import json
@@ -13,8 +12,9 @@ STORE_NAME = "متجر النخبة"
 SYSTEM_PROMPT = f"""أنت "سارة"، موظفة دعم عملاء افتراضية في "{STORE_NAME}".
 - ردّك دائماً باللهجة العامية المهذبة، طبيعية وودودة، لا فصحى جامدة.
 - لا تخترع أي معلومة غير موجودة بالسياق المزوّد لك أدناه.
-- ممنوع منعاً باتاً أن تذكر أي رقم أو مدة أو تاريخ أو تفصيل عن سياسة ما لم يكن موجوداً **حرفياً** داخل "نتيجة الاستعلام" أدناه. إذا كانت نتيجة الاستعلام فارغة أو لا تحتوي المعلومة التي يسأل عنها العميل، فقل له بوضوح إنك لا تملك هذه المعلومة حالياً وإنك ستتأكد له، وممنوع أن تجيب من تخمينك أو من معرفتك العامة.
+- ممنوع منعاً باتاً أن تذكر أي رقم أو مدة أو تاريخ أو تفصيل عن سياسة ما لم يكن موجوداً **حرفياً** داخل "نتيجة الاستعلام" أو "سياق المحادثة السابقة" أدناه. إذا لم تتوفر المعلومة في الاثنين، فقل للعميل بوضوح إنك لا تملكها حالياً وإنك ستتأكد له، وممنوع أن تجيب من تخمينك أو من معرفتك العامة.
 - ممنوع منعاً باتاً أن تقول إنك سجّلت أو حفظت أو رفعت أو حوّلت أو أضفت أي شيء (شكوى، تذكرة، ملاحظة، متابعة) ما لم تُظهر "نتيجة الاستعلام" أدناه صراحةً أن الإجراء تم فعلاً (مثل `created=true` من أداة إنشاء التذكرة). إذا لم تُنفَّذ أداة، **لا تدّعي أنك فعلت شيئاً** — اعرض على العميل أن تقوم به («تحب أسجّلها لك؟») بدل أن تقول إنك سجّلتها.
+- **ممنوع أن تنكر معلومة قلتها أنت للعميل في الردود السابقة**: كل ما ورد في "سياق المحادثة السابقة" معلومة متاحة لك، فإن سألك العميل عن شيء شرحته له قبل قليل (سياسة، مدة، حالة طلب) فأعد شرحه له من السياق، وممنوع أن تقول «ما عندي هالمعلومة» أو «ما ذكرت لك شي» وأنت فعلت.
 - إذا لم تتوفر معلومة كافية بالسياق، اطلب من العميل التوضيح بدل التخمين.
 - إذا كانت الرسالة شكوى **وأُنشئت تذكرة فعلاً عبر الأداة** (ظهر ذلك في "نتيجة الاستعلام")، فأخبر العميل أنك سجّلت الموضوع للمتابعة واذكر رقم التذكرة إن توفّر. أما إذا لم تُنشأ تذكرة، فاعرض عليه تسجيلها بدل ادّعاء أنك سجّلتها.
 - تكلم فقط باللهجة اليمنية العامية. ممنوع منعاً باتاً استخدام أي كلمات أو تعابير مصرية (مثل: يا فندم، دلوقتي، ازيك) أو شامية (مثل: منور، نورت، شو أخبارك، هيك). التزم حصراً بأسلوب وتعابير يمنية طبيعية.
@@ -36,6 +36,11 @@ SYSTEM_PROMPT = f"""أنت "سارة"، موظفة دعم عملاء افترا�
 """
 
 CONTEXT_HEADER = "السياق المتاح لهذا الرد:"
+HISTORY_HEADER = "سياق المحادثة السابقة (آخر الرسائل — هذه معلومات متاحة لك):"
+LOW_CONFIDENCE_NOTE = (
+    "ملاحظة: لم نتأكد من نية الرسالة (ثقة التصنيف منخفضة). "
+    "لا تنفّذ أي إجراء ولا تفترض موضوعاً معيّناً — تفاهم مع العميل واسأله توضيحاً ودّياً عن مقصده."
+)
 
 
 def format_tool_result(tool_result: dict | None) -> str:
@@ -59,35 +64,77 @@ def format_tool_result(tool_result: dict | None) -> str:
         return str(tool_result)
 
 
-def build_context(category: str, tool_result: dict | None, customer_message: str) -> str:
+def format_history(history: list[dict] | None) -> str:
+    """يحوّل رسائل المحادثة السابقة إلى نص مقروء داخل السياق.
+
+    المدخلات:
+        history (list[dict] | None): رسائل بمفاتيح `sender` و `content`.
+
+    المخرجات:
+        str: أسطر المحادثة، أو عبارة تعني «لا يوجد سجل سابق».
+
+    حالات الفشل:
+        لا يرفع استثناءات.
+    """
+    if not history:
+        return "لا يوجد سجل سابق في هذه الجلسة."
+
+    lines = []
+    for row in history:
+        who = "العميل" if row.get("sender") == "customer" else "سارة"
+        lines.append(f"- {who}: {row.get('content', '')}")
+    return "\n".join(lines)
+
+
+def build_context(
+    category: str,
+    tool_result: dict | None,
+    customer_message: str,
+    history: list[dict] | None = None,
+    low_confidence: bool = False,
+) -> str:
     """يبني نص السياق الديناميكي الذي يُمرَّر للـ LLM.
 
     المدخلات:
         category (str): الفئة المصنّفة من نموذج RNN.
         tool_result (dict | None): نتيجة آخر أداة نُفِّذت (أو `None`).
         customer_message (str): رسالة العميل الأصلية.
+        history (list[dict] | None): آخر رسائل المحادثة (ذاكرة قصيرة المدى).
+        low_confidence (bool): هل التصنيف غير مؤكد (تحت العتبة).
 
     المخرجات:
-        str: نص السياق بالحقول الثلاثة المطلوبة في ADR قسم 9.
+        str: نص السياق بالحقول المعتمدة في ADR قسم 9.
 
     حالات الفشل:
         لا يرفع استثناءات.
     """
-    return (
-        f"{CONTEXT_HEADER}\n"
-        f"- نية الرسالة المصنّفة: {category}\n"
-        f"- نتيجة الاستعلام (إن وُجدت): {format_tool_result(tool_result)}\n"
-        f"- رسالة العميل الأصلية: {customer_message}"
-    )
+    parts = [
+        CONTEXT_HEADER,
+        f"- نية الرسالة المصنّفة: {category}",
+        f"- نتيجة الاستعلام (إن وُجدت): {format_tool_result(tool_result)}",
+        f"{HISTORY_HEADER}\n{format_history(history)}",
+        f"- رسالة العميل الأصلية: {customer_message}",
+    ]
+    if low_confidence:
+        parts.append(f"- {LOW_CONFIDENCE_NOTE}")
+    return "\n".join(parts)
 
 
-def build_messages(category: str, tool_result: dict | None, customer_message: str) -> list[dict]:
+def build_messages(
+    category: str,
+    tool_result: dict | None,
+    customer_message: str,
+    history: list[dict] | None = None,
+    low_confidence: bool = False,
+) -> list[dict]:
     """يبني قائمة الرسائل المرسلة لمزوّد الـ LLM.
 
     المدخلات:
         category (str): الفئة المصنّفة.
         tool_result (dict | None): نتيجة الأداة.
         customer_message (str): رسالة العميل الأصلية.
+        history (list[dict] | None): آخر رسائل المحادثة.
+        low_confidence (bool): هل التصنيف غير مؤكد.
 
     المخرجات:
         list[dict]: رسالتان — `system` فيها `SYSTEM_PROMPT`، و`user` فيها السياق
@@ -98,5 +145,8 @@ def build_messages(category: str, tool_result: dict | None, customer_message: st
     """
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": build_context(category, tool_result, customer_message)},
+        {
+            "role": "user",
+            "content": build_context(category, tool_result, customer_message, history, low_confidence),
+        },
     ]

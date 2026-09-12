@@ -11,7 +11,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from agent.extractor import extract_info, extract_order_id, extract_product_name  # noqa: E402
+from agent.extractor import (  # noqa: E402
+    extract_info,
+    extract_order_id,
+    extract_product_name,
+    extract_ticket_reference,
+    is_policy_question,
+)
 from agent.normalizer import normalize_arabic  # noqa: E402
 
 PRODUCTS = [
@@ -109,3 +115,33 @@ def test_extract_order_id_known_limit_takes_keyword_number():
 def test_normalizer_is_applied_consistently():
     """سلامة مسار التطبيع: النص المطبّع يوحّد الهمزات والتاء المربوطة."""
     assert normalize_arabic("بطانية شتوية") == "بطانيه شتويه"
+
+
+def test_extract_ticket_reference_detects_explicit_ticket_mentions():
+    """كشف رقم التذكرة المذكور صراحةً (Task 3)."""
+    assert extract_ticket_reference("ممكن تفاصيل التذكرة 16") == 16
+    assert extract_ticket_reference("التذكره 7 وين وصلت") == 7
+    assert extract_ticket_reference("رقم التذكرة 123") == 123
+
+
+def test_extract_ticket_reference_returns_none_without_ticket():
+    """لا تذكرة في النص => None."""
+    assert extract_ticket_reference("وين وصل طلبي رقم 1002") is None
+    assert extract_ticket_reference("نعم") is None
+    assert extract_ticket_reference(None) is None
+
+
+def test_is_policy_question_matches_policy_wording():
+    """كشف أسئلة السياسات بالكلمات المفتاحية (Task 4)."""
+    assert is_policy_question("ماهي السياسات لديكم") is True
+    assert is_policy_question("هلا، عندكم توصيل لمنطقة الرياض؟") is True
+    assert is_policy_question("كم مدة الاسترجاع؟") is True
+    assert is_policy_question("عندكم ضمان؟") is True
+
+
+def test_is_policy_question_rejects_order_and_conversation():
+    """لا يُصنَّف سؤال الطلب ولا المحادثة العامة كسؤال سياسة."""
+    assert is_policy_question("وين وصل طلبي رقم 1002؟") is False
+    assert is_policy_question("من انت") is False
+    assert is_policy_question("نعم") is False
+    assert is_policy_question("") is False

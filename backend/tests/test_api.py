@@ -82,6 +82,12 @@ def test_chat_happy_path_returns_reply(client):
     assert body["order_id"] == 1002
     assert body["product_name"] == "شاحن سريع"
     assert body["needs_escalation"] is False
+    # الحقول المشتقة الجديدة من إصلاح المعمار (Task 1)
+    assert body["low_confidence"] is False
+    assert body["intent_confidence"] >= 0.65
+    assert body["policy_question"] is False
+    assert body["ticket_reference"] is None
+    assert body["ticket_id"] is None
 
 
 def test_chat_persists_both_messages(client, temp_db):

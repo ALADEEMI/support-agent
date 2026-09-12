@@ -19,6 +19,53 @@ from agent import tools  # noqa: E402
 from database import db  # noqa: E402
 
 
+def test_should_escalate_explicit_request_wins():
+    """طلب التصعيد الصريح يُنشئ تذكرة بغض النظر عن الفئة."""
+    allowed, reason = tools.should_escalate("افتح تذكرة", "other")
+    assert allowed is True
+    assert reason == "explicit_escalation_request"
+
+
+def test_should_escalate_requires_complaint_category():
+    """رسالة ليست شكوى ولا طلب تصعيد => لا تذكرة."""
+    allowed, reason = tools.should_escalate("شكرا جزيلا لك", "other")
+    assert allowed is False
+    assert reason == "category_not_complaint"
+
+
+def test_should_escalate_rejects_short_conversational_tokens():
+    """رموز محادثة قصيرة (مثل «نعم») لا تُنشئ تذكرة (سبب التذاكر الزائفة سابقاً)."""
+    for message in ["نعم", "من انت", "اوكي"]:
+        allowed, reason = tools.should_escalate(message, "complaint")
+        assert allowed is False, f"أُنشئت تذكرة لـ {message!r}"
+        assert reason == "complaint_too_short"
+
+
+def test_should_escalate_accepts_genuine_complaint_description():
+    """وصف شكوى حقيقي (>= الحد الأدنى للكلمات) يُنشئ تذكرة."""
+    allowed, reason = tools.should_escalate("الخدمة سيئة جدا وما احد رد علي حسبي الله", "complaint")
+    assert allowed is True
+    assert reason == "validated_complaint"
+
+
+def test_should_escalate_blocks_duplicate_ticket_in_session():
+    """لا تذكرة ثانية لنفس الجلسة إن كانت هناك تذكرة مفتوحة."""
+    allowed, reason = tools.should_escalate(
+        "الخدمة سيئة جدا وما احد رد علي حسبي الله", "complaint", already_escalated=True
+    )
+    assert allowed is False
+    assert reason == "ticket_already_open_in_session"
+
+
+def test_has_explicit_escalation_request_variants():
+    """صيغ متعددة لطلب التصعيد الصريح."""
+    assert tools.has_explicit_escalation_request("ابغى افتح تذكرة") is True
+    assert tools.has_explicit_escalation_request("سأشتكي عليكم") is True
+    assert tools.has_explicit_escalation_request("ابغى رفع طلب") is True
+    assert tools.has_explicit_escalation_request("وين وصل طلبي؟") is False
+    assert tools.has_explicit_escalation_request("") is False
+
+
 @pytest.fixture()
 def temp_db(tmp_path, monkeypatch):
     """ينشئ قاعدة بيانات تجريبية معزولة ويعبّئها ببيانات اختبار.

@@ -62,6 +62,20 @@ MODEL_CONFIG_PATH = str(
 FLASK_ENV = os.getenv("FLASK_ENV") or "development"
 FLASK_PORT = int(os.getenv("FLASK_PORT") or "5000")
 
+# --- عتبات سلوك الوكيل (قابلة للتجاوز عبر متغيرات البيئة) ---------------------
+
+# أقل ثقة مقبولة لتصنيف النية. تحت هذه العتبة لا يُعتمد التصنيف ولا تُنفَّذ أدوات
+# ذات آثار جانبية (إنشاء تذكرة) أو استعلامات مبنية على تخمين — يُعالَج الردّ
+# حواريّاً مع طلب توضيح. راجع ADR قسم 8.2.
+INTENT_CONFIDENCE_THRESHOLD = float(os.getenv("INTENT_CONFIDENCE_THRESHOLD") or "0.65")
+
+# أقل عدد كلمات لاعتبار الرسالة «وصفاً حقيقياً» لشكوى (يمنع تحويل رسائل مثل
+# «نعم» أو «من انت» إلى تذاكر). راجع ADR قسم 8.2.
+MIN_COMPLAINT_WORDS = int(os.getenv("MIN_COMPLAINT_WORDS") or "4")
+
+# عدد الدورات المسموح فيها بإعادة استخدام `order_id` الملتصق بلا ذكر جديد.
+MAX_STICKY_ORDER_TURNS = int(os.getenv("MAX_STICKY_ORDER_TURNS") or "1")
+
 
 def require_api_key() -> str:
     """يرجع مفتاح CommandCode API أو يفشل برسالة واضحة.
