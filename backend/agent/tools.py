@@ -107,13 +107,15 @@ def check_order_status(order_id: int) -> dict:
 
     المخرجات:
         dict: عند النجاح `{'found': True, 'order_id': int, 'status': str,
-            'product_name': str, 'expected_delivery': str | None}`.
+            'product_name': str, 'order_date': str, 'expected_delivery': str | None}`.
             إذا لم يوجد الطلب `{'found': False, 'order_id': int}`.
             عند فشل الاستعلام `{'found': False, 'order_id': int, 'error': str}`.
 
     حالات الفشل:
         لا يرفع استثناءات — أي خطأ اتصال بقاعدة البيانات يُعاد كرسالة منظّمة
         في مفتاح `error`.
+
+    ملاحظة: `order_date` أُضيف لبناء «بطاقة الطلب» في الواجهة (Phase 8).
     """
     try:
         order = db.get_order_with_product(order_id)
@@ -128,6 +130,7 @@ def check_order_status(order_id: int) -> dict:
         "order_id": order["order_id"],
         "status": order["status"],
         "product_name": order["product_name"],
+        "order_date": order["order_date"],
         "expected_delivery": order["expected_delivery"],
     }
 

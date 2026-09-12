@@ -1,23 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchHistory, sendMessage } from "../api";
+import OrderCard from "./OrderCard";
 import "./ChatWindow.css";
 
-const SESSION_KEY = "support-agent-session-id";
+/** أقل تأخير قبل إظهار مؤشر «سارة تكتب» (إيقاع طبيعي بدل الظهور اللحظي). */
+const TYPING_DELAY_MS = 700;
 
-/**
- * يرجع معرّف جلسة ثابتاً لهذا المتصفح، وينشئه عند أول زيارة إن لم يكن موجوداً.
- *
- * @returns {string} معرّف الجلسة.
- */
-function getOrCreateSessionId() {
-  let sessionId = window.localStorage.getItem(SESSION_KEY);
-  if (!sessionId) {
-    sessionId = `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    window.localStorage.setItem(SESSION_KEY, sessionId);
-  }
-  return sessionId;
-}
+/** أقل مدة يُعرض فيها المؤشر حتى لو ردّ الـ backend بسرعة. */
+const TYPING_MIN_VISIBLE_MS = 400;
+
+/** مدة إخفاء المؤشر المتدرّج (مطابقة لمدة الانتقال في CSS). */
+const TYPING_FADE_MS = 260;
+
+/** اقتراحات سريعة تُعبّئ حقل الإدخال وتُرسل مباشرة. */
+const QUICK_REPLIES = [
+  "🚚 وين طلبي رقم 1002؟",
+  "🔄 ما هي سياسة الاسترجاع والاستبدال؟",
+  "📦 ايش المنتجات المتوفرة عندكم؟",
+  "✍️ أشتي أرفع شكوى",
+];
 
 /**
  * يبني طابعاً زمنياً محلياً بنفس صيغة قاعدة البيانات (`YYYY-MM-DD HH:MM:SS`).
@@ -67,51 +69,100 @@ function CustomerIcon() {
 }
 
 /**
- * نافذة المحادثة: تعرض الرسائل، ترسل رسائل جديدة، وتحمّل السجل القديم عند الفتح.
+ * نافذة المحادثة: تعرض رسائل الجلسة النشطة، ترسل رسائل جديدة، وتحمّل السجل عند
+ * تبديل الجلسة. الحالة (الجلسة النشطة) تصل من `App` ليتسنّى للشريط الجانبي تبديلها.
  *
+ * @param {object} props - الخصائص.
+ * @param {string} props.sessionId - معرّف الجلسة النشطة.
+ * @param {() => void} [props.onTurnComplete] - يُستدعى بعد انتهاء الدورة (لتحديث الشريط).
  * @returns {JSX.Element} واجهة المحادثة.
  */
-export default function ChatWindow() {
-  const [sessionId] = useState(getOrCreateSessionId);
+export default function ChatWindow({ sessionId, onTurnComplete }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [typingPhase, setTypingPhase] = useState("hidden");
   const listRef = useRef(null);
+  const historyRequestRef = useRef(0);
 
   useEffect(() => {
-    let cancelled = false;
+    const requestId = historyRequestRef.current + 1;
+    historyRequestRef.current = requestId;
+
+    setMessages([]);
+    setError(null);
+    setTypingPhase("hidden");
 
     fetchHistory(sessionId)
       .then((history) => {
-        if (cancelled) {
-          return;
+        if (historyRequestRef.current !== requestId) {
+          return; // جلسة أخرى صارت نشطة — تجاهل الرد المتأخر.
         }
-        // لا تستبدل رسائل أضافها المستخدم أثناء تحميل السجل (سباق زمني حقيقي:
-        // لو تأخّر طلب السجل حتى بعد إرسال أول رسالة، كانت النتيجة الفارغة تمحوها).
-        setMessages((previous) => (previous.length === 0 ? history : previous));
+        // نوحّد شكل رسائل السجل مع شكل رسائل الدورة الحيّة، حتى تُرسم بطاقة
+        // الطلب المحفوظة في `metadata` بنفس الطريقة بعد إعادة فتح الجلسة.
+        const restored = history.map((message) => ({
+          sender: message.sender,
+          content: message.content,
+          timestamp: message.timestamp,
+          orderDetails: message.order_details || null,
+        }));
+        // لا تستبدل رسائل أضافها المستخدم أثناء تحميل السجل.
+        setMessages((previous) => (previous.length === 0 ? restored : previous));
       })
       .catch((err) => {
-        if (!cancelled) {
+        if (historyRequestRef.current === requestId) {
           setError(err.message);
         }
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [sessionId]);
 
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
-  }, [messages, isLoading]);
+  }, [messages, typingPhase]);
 
-  const handleSubmit = useCallback(
-    async (event) => {
-      event.preventDefault();
-      const text = input.trim();
+  /**
+   * ينفّذ طلب الـ backend مع إدارة إيقاع مؤشر الكتابة (تأخير الظهور + أقل مدة عرض).
+   *
+   * @param {string} text - نص الرسالة.
+   * @returns {Promise<object>} استجابة الـ backend.
+   */
+  const requestWithTypingCadence = useCallback(async (text) => {
+    let shown = false;
+    const startedAt = Date.now();
+    const showTimer = setTimeout(() => {
+      shown = true;
+      setTypingPhase("showing");
+    }, TYPING_DELAY_MS);
+
+    try {
+      return await sendMessage(sessionId, text);
+    } finally {
+      clearTimeout(showTimer);
+      const elapsed = Date.now() - startedAt;
+
+      if (!shown) {
+        // الرد وصل قبل التأخير: أظهر المؤشر لمدة رحمة قصيرة ثم أخفِه.
+        setTypingPhase("showing");
+        await new Promise((resolve) => setTimeout(resolve, TYPING_MIN_VISIBLE_MS));
+      } else {
+        const visibleFor = elapsed - TYPING_DELAY_MS;
+        if (visibleFor < TYPING_MIN_VISIBLE_MS) {
+          await new Promise((resolve) => setTimeout(resolve, TYPING_MIN_VISIBLE_MS - visibleFor));
+        }
+      }
+
+      setTypingPhase("hiding");
+      await new Promise((resolve) => setTimeout(resolve, TYPING_FADE_MS));
+      setTypingPhase("hidden");
+    }
+  }, [sessionId]);
+
+  const handleSend = useCallback(
+    async (rawText) => {
+      const text = (rawText || "").trim();
       if (!text || isLoading) {
         return;
       }
@@ -125,18 +176,34 @@ export default function ChatWindow() {
       ]);
 
       try {
-        const data = await sendMessage(sessionId, text);
+        const data = await requestWithTypingCadence(text);
         setMessages((previous) => [
           ...previous,
-          { sender: "agent", content: data.reply, timestamp: localTimestamp() },
+          {
+            sender: "agent",
+            content: data.reply,
+            timestamp: localTimestamp(),
+            orderDetails: data.order_details || null,
+          },
         ]);
       } catch (err) {
         setError(err.message);
       } finally {
         setIsLoading(false);
+        if (onTurnComplete) {
+          onTurnComplete();
+        }
       }
     },
-    [input, isLoading, sessionId]
+    [isLoading, onTurnComplete, requestWithTypingCadence]
+  );
+
+  const handleSubmit = useCallback(
+    (event) => {
+      event.preventDefault();
+      handleSend(input);
+    },
+    [handleSend, input]
   );
 
   return (
@@ -168,6 +235,7 @@ export default function ChatWindow() {
               </span>
               <div className="chat-bubble-wrap">
                 <div className={`chat-bubble chat-bubble-${message.sender}`}>{message.content}</div>
+                {message.orderDetails && <OrderCard order={message.orderDetails} />}
                 {formatTime(message.timestamp) && (
                   <span className="chat-time">{formatTime(message.timestamp)}</span>
                 )}
@@ -175,8 +243,8 @@ export default function ChatWindow() {
             </div>
           ))}
 
-          {isLoading && (
-            <div className="chat-row chat-row-agent">
+          {typingPhase !== "hidden" && (
+            <div className={`chat-row chat-row-agent chat-typing-row is-${typingPhase}`}>
               <span className="chat-avatar chat-avatar-agent" aria-hidden="true">
                 ن
               </span>
@@ -193,6 +261,21 @@ export default function ChatWindow() {
         </div>
 
         {error && <div className="chat-error">تعذّر إتمام الطلب: {error}</div>}
+
+        {!isLoading && (
+          <div className="chat-chips" aria-label="اقتراحات سريعة">
+            {QUICK_REPLIES.map((chip) => (
+              <button
+                type="button"
+                key={chip}
+                className="chat-chip"
+                onClick={() => handleSend(chip)}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        )}
 
         <form className="chat-form" onSubmit={handleSubmit}>
           <input

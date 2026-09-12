@@ -1,0 +1,192 @@
+/* Phase 8 — الشريط الجانبي لسجل المحادثات.
+   كحلي داكن مع تمييز ذهبي، ووسوم حالة بألوان صريحة (أخضر/برتقالي/أحمر/رمادي). */
+
+.sidebar {
+  flex: 0 0 290px;
+  max-width: 290px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 14px;
+  background: linear-gradient(180deg, rgba(13, 22, 38, 0.96), rgba(20, 32, 58, 0.96));
+  border-inline-end: 1px solid rgba(201, 169, 97, 0.32);
+  color: var(--elite-cream, #f7f5f0);
+  overflow: hidden;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-logo {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1.5px solid var(--elite-gold, #c9a961);
+  color: var(--elite-gold, #c9a961);
+  background: rgba(201, 169, 97, 0.12);
+  font-weight: 700;
+}
+
+.sidebar-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.sidebar-new {
+  padding: 11px 14px;
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--elite-navy, #1b2a4a);
+  background: linear-gradient(180deg, var(--elite-gold-bright, #e0c583), var(--elite-gold, #c9a961));
+  border: 1px solid rgba(201, 169, 97, 0.9);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: filter 0.18s ease, transform 0.12s ease;
+}
+
+.sidebar-new:hover {
+  filter: brightness(1.06);
+}
+
+.sidebar-new:active {
+  transform: translateY(1px);
+}
+
+.sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-inline-end: 2px;
+}
+
+.sidebar-empty {
+  margin: 12px 4px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: rgba(247, 245, 240, 0.62);
+}
+
+/* ---------- عنصر جلسة ---------- */
+
+.sidebar-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 10px 11px;
+  text-align: start;
+  font-family: inherit;
+  color: inherit;
+  background: rgba(247, 245, 240, 0.06);
+  border: 1px solid rgba(201, 169, 97, 0.22);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+}
+
+.sidebar-item:hover {
+  background: rgba(247, 245, 240, 0.11);
+  border-color: rgba(201, 169, 97, 0.45);
+}
+
+.sidebar-item.is-active {
+  background: rgba(201, 169, 97, 0.16);
+  border-color: var(--elite-gold, #c9a961);
+  box-shadow: inset 3px 0 0 0 var(--elite-gold, #c9a961);
+}
+
+.sidebar-item-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.sidebar-item-title {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.6;
+  color: #fdfbf6;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.sidebar-item-snippet {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: rgba(247, 245, 240, 0.68);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.sidebar-item-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: rgba(247, 245, 240, 0.55);
+}
+
+/* ---------- وسوم الحالة ---------- */
+
+.session-badge {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.session-badge-resolved {
+  color: #0f5132;
+  background: #d3f2de;
+  border-color: #7fd0a0;
+}
+
+.session-badge-escalated {
+  color: #7a4100;
+  background: #ffe6c7;
+  border-color: #f0b46b;
+}
+
+.session-badge-unresolved {
+  color: #7d1f19;
+  background: #fbd9d6;
+  border-color: #e3928a;
+}
+
+.session-badge-active {
+  color: #334155;
+  background: #e6eaf2;
+  border-color: #b9c3d6;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    flex: 0 0 auto;
+    max-width: none;
+    border-inline-end: none;
+    border-bottom: 1px solid rgba(201, 169, 97, 0.32);
+  }
+
+  .sidebar-list {
+    max-height: 190px;
+  }
+}

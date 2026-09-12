@@ -55,6 +55,97 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def _order_details(state: dict) -> dict | None:
+    """يستخرج تفاصيل الطلب من نتيجة أدوات الدورة (لبطاقة الطلب في الواجهة).
+
+    المدخلات:
+        state (dict): حالة الوكيل بعد تنفيذ الدورة.
+
+    المخرجات:
+        dict | None: `order_id`, `product_name`, `status`, `order_date`,
+            `expected_delivery` — أو `None` إذا لم يكن هناك طلب موجود فعلاً.
+
+    حالات الفشل:
+        لا يرفع استثناءات.
+    """
+    tool_result = state.get("tool_result")
+    if not isinstance(tool_result, dict) or not tool_result.get("found"):
+        return None
+    if "order_id" not in tool_result or "status" not in tool_result:
+        return None
+    return {
+        "order_id": tool_result.get("order_id"),
+        "product_name": tool_result.get("product_name"),
+        "status": tool_result.get("status"),
+        "order_date": tool_result.get("order_date"),
+        "expected_delivery": tool_result.get("expected_delivery"),
+    }
+
+
+def _tool_outcome(tool_result) -> str:
+    """يصنّف نتيجة أدوات الدورة إلى مفتاح مختصر لحالة الجلسة.
+
+    المدخلات:
+        tool_result (dict | None): نتيجة الأدوات من حالة الوكيل.
+
+    المخرجات:
+        str: `order_found`, `order_not_found`, `policy_found`, `policy_missing`,
+            `ticket_created`, `ticket_skipped`, أو `none`.
+
+    حالات الفشل:
+        لا يرفع استثناءات.
+    """
+    if not isinstance(tool_result, dict) or not tool_result:
+        return "none"
+
+    if "created" in tool_result:
+        return "ticket_created" if tool_result.get("created") else "ticket_skipped"
+
+    policy_keys = [key for key in ("return", "refund", "shipping") if key in tool_result]
+    if policy_keys:
+        found = any(
+            isinstance(tool_result[key], dict) and tool_result[key].get("found") for key in policy_keys
+        )
+        return "policy_found" if found else "policy_missing"
+
+    if "found" in tool_result:
+        if tool_result["found"]:
+            return "order_found"
+        return "order_not_found" if "order_id" in tool_result else "none"
+
+    return "none"
+
+
+def _record_turn_outcome(session_id: str, state: dict | None = None, had_error: bool = False) -> None:
+    """يسجّل مقياس الدورة لحالة الجلسة، دون إسقاط الطلب إن فشل التسجيل.
+
+    المدخلات:
+        session_id (str): معرّف الجلسة.
+        state (dict | None): حالة الوكيل (أو `None` عند الفشل).
+        had_error (bool): هل انتهت الدورة بخطأ.
+
+    المخرجات:
+        None.
+
+    حالات الفشل:
+        لا يرفع استثناءات — أي فشل يُسجَّل كتحذير فقط (التسجيل تشخيصي، وليس
+        شرطاً لنجاح الطلب). أشهر سبب: قاعدة بيانات قديمة بلا جدول `turn_outcomes`.
+    """
+    try:
+        db.record_turn_outcome(
+            session_id,
+            (state or {}).get("category", "") or "",
+            bool((state or {}).get("low_confidence")),
+            _tool_outcome((state or {}).get("tool_result")),
+            had_error=had_error,
+        )
+    except Exception:  # noqa: BLE001 - التشخيص لا يجب أن يُسقط الطلب
+        app.logger.warning(
+            "تعذّر تسجيل مقاييس الدورة (شغّل python database/seed_data.py لإنشاء جدول turn_outcomes)",
+            exc_info=True,
+        )
+
+
 @app.post("/api/chat")
 def chat():
     """يستقبل رسالة عميل ويعيد رد الوكيل، مع حفظ الطرفين في سجل المحادثة.
@@ -97,18 +188,29 @@ def chat():
         state = graph.run_turn(session_id, message)
     except RuntimeError as exc:
         app.logger.error("فشل تشغيل الوكيل (إعداد): %s", exc)
+        _record_turn_outcome(session_id, had_error=True)
         return _error(str(exc), 500)
     except requests.RequestException as exc:
         app.logger.error("فشل الاتصال بمزوّد الـ LLM: %s", exc)
+        _record_turn_outcome(session_id, had_error=True)
         return _error(f"تعذّر الوصول إلى مزوّد الـ LLM: {exc}", 502)
     except Exception as exc:  # noqa: BLE001 - نُعيد خطأ منظّماً بدل استجابة HTML
         app.logger.exception("خطأ غير متوقع أثناء تشغيل الوكيل")
+        _record_turn_outcome(session_id, had_error=True)
         return _error(f"خطأ غير متوقع أثناء معالجة الرسالة: {exc}", 500)
 
+    _record_turn_outcome(session_id, state)
+
     reply = state.get("final_response", "")
+    order_details = _order_details(state)
 
     try:
-        db.add_chat_message(session_id, "agent", reply)
+        db.add_chat_message(
+            session_id,
+            "agent",
+            reply,
+            metadata={"order_details": order_details} if order_details else None,
+        )
     except Exception as exc:  # noqa: BLE001
         app.logger.exception("فشل حفظ رد الوكيل في chat_messages")
         return _error(f"تعذّر حفظ رد الوكيل: {exc}", 500)
@@ -128,10 +230,33 @@ def chat():
                 "ticket_reference": state.get("ticket_reference"),
                 "ticket_id": state.get("ticket_id"),
                 "needs_escalation": state.get("needs_escalation", False),
+                "order_details": order_details,
             }
         ),
         200,
     )
+
+
+@app.get("/api/sessions")
+def sessions():
+    """يرجع ملخّص كل جلسات المحادثة مع حالتها (لسجل المحادثات في الواجهة).
+
+    المخرجات:
+        JSON: `{"sessions": [{session_id, first_message, last_message, updated_at,
+            message_count, ticket_id, status}, ...]}` برمز 200، مرتّبة بالأحدث أولاً.
+        قيم `status`: `escalated` (تذكرة) / `resolved` (تم الحل) /
+        `unresolved` (معلقة) / `active` (محادثة عامة بلا استعلام).
+
+    حالات الفشل:
+        500: خطأ في قراءة قاعدة البيانات.
+    """
+    try:
+        summaries = db.list_chat_sessions()
+    except Exception as exc:  # noqa: BLE001 - نُعيد خطأ منظّماً بدل استجابة HTML
+        app.logger.exception("فشل جلب ملخّص الجلسات")
+        return _error(f"تعذّر جلب سجل المحادثات: {exc}", 500)
+
+    return jsonify({"sessions": summaries}), 200
 
 
 @app.get("/api/history/<session_id>")

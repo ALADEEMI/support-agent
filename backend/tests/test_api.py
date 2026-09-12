@@ -247,7 +247,14 @@ def test_history_returns_ordered_messages_after_chat(client):
     assert messages[1]["content"] == FIXED_REPLY
     assert messages[2]["content"] == "طيب متى يوصل بالضبط؟"
     for message in messages:
-        assert set(message.keys()) == {"message_id", "sender", "content", "timestamp"}
+        assert set(message.keys()) == {
+            "message_id",
+            "sender",
+            "content",
+            "metadata",
+            "order_details",
+            "timestamp",
+        }
 
 
 def test_history_is_isolated_per_session(client):
@@ -260,3 +267,175 @@ def test_history_is_isolated_per_session(client):
     assert [m["content"] for m in first][0] == "هلا"
     assert [m["content"] for m in second][0] == "مرحبا"
     assert len(first) == len(second) == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — /api/sessions وحالة الجلسة وبطاقة الطلب
+# ---------------------------------------------------------------------------
+
+
+def test_sessions_endpoint_empty(client):
+    """لا جلسات => قائمة فارغة برمز 200 (لا خطأ)."""
+    response = client.get("/api/sessions")
+    assert response.status_code == 200
+    assert response.get_json() == {"sessions": []}
+
+
+def test_sessions_summary_shape_and_ordering(client):
+    """ملخّص الجلسات يعرض الحقول المطلوبة ومرتّباً بالأحدث أولاً."""
+    client.post("/api/chat", json={"session_id": "old-session", "message": "وين وصل طلبي رقم 1002 وهو شاحن سريع؟"})
+    client.post("/api/chat", json={"session_id": "new-session", "message": "طيب متى يوصل بالضبط؟"})
+
+    sessions = client.get("/api/sessions").get_json()["sessions"]
+    assert len(sessions) == 2
+    assert sessions[0]["session_id"] == "new-session", "الترتيب ليس بالأحدث أولاً"
+
+    summary = next(s for s in sessions if s["session_id"] == "old-session")
+    assert summary["first_message"] == "وين وصل طلبي رقم 1002 وهو شاحن سريع؟"
+    assert summary["last_message"] == FIXED_REPLY
+    assert summary["message_count"] == 2
+    assert summary["updated_at"]
+    assert summary["ticket_id"] is None
+    assert set(summary.keys()) == {
+        "session_id",
+        "first_message",
+        "last_message",
+        "updated_at",
+        "message_count",
+        "ticket_id",
+        "status",
+    }
+
+
+def test_sessions_status_resolved_when_order_found(client):
+    """حالة الجلسة = resolved عندما ينجح استعلام الطلب."""
+    client.post("/api/chat", json={"session_id": "st-resolved", "message": "وين وصل طلبي رقم 1002 وهو شاحن سريع؟"})
+    sessions = client.get("/api/sessions").get_json()["sessions"]
+    assert sessions[0]["status"] == "resolved"
+
+
+def test_sessions_status_escalated_when_ticket_exists(client, temp_db):
+    """حالة الجلسة = escalated عند وجود تذكرة مرتبطة بها."""
+    client.post(
+        "/api/chat",
+        json={"session_id": "st-escalated", "message": "الخدمة سيئة جدا وما احد رد علي حسبي الله"},
+    )
+    sessions = client.get("/api/sessions").get_json()["sessions"]
+    summary = sessions[0]
+    assert summary["status"] == "escalated"
+    assert isinstance(summary["ticket_id"], int)
+
+
+def test_sessions_status_unresolved_when_low_confidence(client):
+    """حالة الجلسة = unresolved عند انتهائها بدورة منخفضة الثقة."""
+    client.post("/api/chat", json={"session_id": "st-low", "message": "نعم"})
+    sessions = client.get("/api/sessions").get_json()["sessions"]
+    assert sessions[0]["status"] == "unresolved"
+
+
+def test_sessions_status_active_for_plain_conversation(client):
+    """حالة الجلسة = active لمحادثة عامة بلا استعلام ولا مشكلة (حالة محايدة)."""
+    client.post("/api/chat", json={"session_id": "st-active", "message": "هلا والله كيف حالكم اليوم"})
+    sessions = client.get("/api/sessions").get_json()["sessions"]
+    assert sessions[0]["status"] == "active"
+
+
+def test_sessions_status_unresolved_when_customer_message_unanswered(client, temp_db):
+    """جلسة انتهت برسالة عميل بلا رد (انقطاع) => unresolved."""
+    # نُحاكي انقطاعاً: رسالة عميل محفوظة بلا رد وكيل (كما يحدث لو فشل الـ LLM).
+    db.add_chat_message("st-abandoned", "customer", "طلبي متأخر وين وصل")
+
+    sessions = client.get("/api/sessions").get_json()["sessions"]
+    assert sessions[0]["session_id"] == "st-abandoned"
+    assert sessions[0]["status"] == "unresolved"
+
+
+def test_chat_includes_order_details_for_found_order(client):
+    """بطاقة الطلب: `order_details` تُبنى عند وجود طلب فعلي."""
+    response = client.post(
+        "/api/chat",
+        json={"session_id": "od-1", "message": "وين وصل طلبي رقم 1002 وهو شاحن سريع؟"},
+    )
+    body = response.get_json()
+    details = body["order_details"]
+    assert details is not None
+    assert details["order_id"] == 1002
+    assert details["product_name"] == "شاحن سريع"
+    assert details["status"] == "قيد الشحن"
+    assert details["order_date"] == "2026-08-28"
+    assert details["expected_delivery"] == "2026-09-08"
+
+
+def test_chat_order_details_null_without_order(client):
+    """لا بطاقة طلب عندما لا يوجد طلب (سؤال سياسة)."""
+    response = client.post(
+        "/api/chat",
+        json={"session_id": "od-2", "message": "ابغى ارجع المنتج لان مو مطابق للمواصفات"},
+    )
+    assert response.get_json()["order_details"] is None
+
+
+def test_order_details_persist_in_chat_messages_metadata(client, temp_db):
+    """Phase 8: تفاصيل الطلب تُحفظ فعلاً في عمود `metadata` بجدول `chat_messages`."""
+    client.post(
+        "/api/chat",
+        json={"session_id": "od-persist", "message": "وين وصل طلبي رقم 1002 وهو شاحن سريع؟"},
+    )
+
+    history = db.get_chat_history("od-persist")
+    agent_message = [m for m in history if m["sender"] == "agent"][0]
+    assert agent_message["metadata"] is not None
+    assert agent_message["metadata"]["order_details"]["order_id"] == 1002
+    assert agent_message["metadata"]["order_details"]["status"] == "قيد الشحن"
+    assert agent_message["order_details"]["product_name"] == "شاحن سريع"
+
+    customer_message = [m for m in history if m["sender"] == "customer"][0]
+    assert customer_message["metadata"] is None
+    assert customer_message["order_details"] is None
+
+
+def test_history_endpoint_returns_order_details_for_reload(client):
+    """Phase 8: `/api/history/` يُرجع `order_details` حتى تُرسم البطاقة بعد إعادة الفتح."""
+    client.post(
+        "/api/chat",
+        json={"session_id": "od-reload", "message": "وين وصل طلبي رقم 1002 وهو شاحن سريع؟"},
+    )
+
+    messages = client.get("/api/history/od-reload").get_json()["messages"]
+    agent_message = [m for m in messages if m["sender"] == "agent"][0]
+    assert agent_message["order_details"]["order_id"] == 1002
+    assert agent_message["order_details"]["status"] == "قيد الشحن"
+    assert agent_message["order_details"]["order_date"] == "2026-08-28"
+    assert agent_message["metadata"]["order_details"] == agent_message["order_details"]
+
+
+def test_history_metadata_survives_corrupt_json(client, temp_db):
+    """حِمولة JSON تالفة لا تُسقط السجل — تُعاد `metadata` كـ None بدل رفع استثناء."""
+    connection = db.get_connection(str(temp_db))
+    try:
+        connection.execute(
+            "INSERT INTO chat_messages (session_id, sender, content, metadata) VALUES (?, ?, ?, ?)",
+            ("od-corrupt", "agent", "ردّ قديم", "{ليس JSON صالحاً"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    messages = client.get("/api/history/od-corrupt").get_json()["messages"]
+    assert len(messages) == 1
+    assert messages[0]["content"] == "ردّ قديم"
+    assert messages[0]["metadata"] is None
+    assert messages[0]["order_details"] is None
+
+
+def test_metadata_migration_is_idempotent(client, temp_db):
+    """الترحيل آمن عند التكرار: تشغيل init_db مرتين لا يفشل ولا يكرّر العمود."""
+    db.init_db(str(temp_db))
+    db.init_db(str(temp_db))
+
+    connection = db.get_connection(str(temp_db))
+    try:
+        columns = [row["name"] for row in connection.execute("PRAGMA table_info(chat_messages)")]
+    finally:
+        connection.close()
+    assert columns.count("metadata") == 1

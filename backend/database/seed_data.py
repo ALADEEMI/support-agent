@@ -85,6 +85,7 @@ ORDERS = [
 ]
 
 TABLES_IN_CLEAR_ORDER = [
+    "turn_outcomes",
     "tickets",
     "chat_messages",
     "orders",

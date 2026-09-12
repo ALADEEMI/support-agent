@@ -233,7 +233,24 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_session ON tickets(session_id);
+
+-- (إضافة Phase 8) مقاييس كل دورة — تُستخدم لاشتقاق «حالة الجلسة» في /api/sessions.
+-- جدول إضافي لا يمسّ الجداول القائمة، ويُنشأ بـ CREATE TABLE IF NOT EXISTS.
+CREATE TABLE IF NOT EXISTS turn_outcomes (
+    outcome_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    low_confidence INTEGER NOT NULL DEFAULT 0,
+    tool_outcome TEXT NOT NULL DEFAULT 'none',
+    had_error INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_turn_outcomes_session ON turn_outcomes(session_id);
 ```
+
+> **ملاحظة ترحيل (Phase 8):** الجدول الجديد يُنشأ عبر `python database/seed_data.py`
+> (الذي ينفّذ `init_db`). قاعدة بيانات قائمة من قبل تحتاج تشغيل هذا الأمر مرة واحدة؛
+> ونظام التشغيل يتعامل مع غياب الجدول بلطف (تسجيل تحذير) فلا تتعطّل المحادثة.
 
 **ملاحظة دقيقة:** جدول `chat_messages` أُضيف صراحة هنا (لم يكن مذكوراً بالنقاش السابق) لأنه ضروري لتحقيق "سجل محادثة العميل" المطلوب صراحة — بدونه، لا يوجد مكان لتخزين المحادثة بشكل دائم قابل للعرض بالواجهة عند إعادة فتحها.
 
@@ -551,3 +568,87 @@ memory = SqliteSaver(connection)
 > - [x] **حجم الداتا سيت النهائي**: 4000 صف (1000 لكل فئة).
 > - [x] **صيغة ملفات الموديل**: `model.keras` + `config.json` (وليس `.h5`) — انظر قسم 2 و 3 و 6.1.
 > - [ ] **متبقٍ (فجوة حرجة)**: تسلسل عقد LangGraph وحوافه الشرطية (قسم 8.2 يحيل إلى رسم غير مضمّن في الوثيقة) — مطلوب قبل Phase 4.
+>   - **تحديث:** حُسمت هذه الفجوة لاحقاً؛ البنية الرسمية الكاملة للعقد والحواف مُوثَّقة الآن في قسم 8.2.
+
+---
+
+## 13. تحسينات الواجهة وسجل الجلسات (Phase 8)
+
+### 13.1 واجهة الـ API الجديدة
+
+| المسار | الوصف |
+|---|---|
+| `GET /api/sessions` | ملخّص كل الجلسات مرتّباً بالأحدث أولاً |
+
+**شكل الاستجابة:**
+```json
+{
+  "sessions": [
+    {
+      "session_id": "web-...",
+      "first_message": "أول رسالة عميل (عنوان المحادثة)",
+      "last_message": "آخر رسالة",
+      "updated_at": "2026-09-12 06:46:00",
+      "message_count": 4,
+      "ticket_id": null,
+      "status": "resolved"
+    }
+  ]
+}
+```
+
+كما أُضيف إلى استجابة `POST /api/chat` حقل **`order_details`** (أو `null`) عندما ينجح
+استعلام طلب فعلي، ويحوي: `order_id`, `product_name`, `status`, `order_date`,
+`expected_delivery` — ويُستخدم لرسم «بطاقة الطلب» في الواجهة.
+
+### 13.2 حالة الجلسة (Session Status Heuristic)
+
+تُشتقّ الحالة في `db.list_chat_sessions()` من **بيانات فعلية** (لا من تحليل نص الرد)
+بالترتيب التالي:
+
+| الحالة | الوسم | القاعدة |
+|---|---|---|
+| `escalated` | 🟠 تذكرة متابعة | يوجد صف في `tickets` لهذه الجلسة |
+| `unresolved` | 🔴 معلقة | آخر رسالة من العميل بلا رد (انقطاع/خطأ)، أو آخر دورة انتهت بخطأ (`had_error`)، أو بثقة منخفضة، أو استعلام لم يجد النتيجة (`order_not_found` / `policy_missing`) |
+| `resolved` | 🟢 تم الحل | آخر دورة نجح استعلامها (`order_found` / `policy_found` / `ticket_created` / `ticket_skipped`) |
+| `active` | ⚪ محادثة عامة | محادثة عامة بلا استعلام ولا مشكلة |
+
+> **قرار إضافي (مُعلَن):** `active` حالة **رابعة** أُضيفت فوق الحالات الثلاث المطلوبة،
+> لأن تصنيف محادثة ترحيبية بلا استعلام كـ«تم الحل» أو «معلقة» كلاهما مضلِّل.
+> المشغّل (`tool_outcome`) يُسجَّل لكل دورة في `turn_outcomes` من داخل `app.py` بعد
+> تنفيذ الرسم، ويُسجَّل `had_error=1` عند فشل الـ LLM أو خطأ داخلي.
+
+### 13.3 مكوّنات الواجهة الجديدة
+
+| المكوّن | الوظيفة |
+|---|---|
+| `ChatSidebar.jsx` + `.css` | شريط جانبي RTL: زر «+ محادثة جديدة»، قائمة الجلسات مع العنوان والمعاينة والتاريخ ووسم الحالة، وتمييز الجلسة النشطة |
+| `OrderCard.jsx` | بطاقة الطلب داخل فقاعة الوكيل: المنتج، رقم الطلب، تاريخ الطلب، التوصيل المتوقع |
+| `App.jsx` + `App.css` | يملك الجلسة النشطة وقائمة الجلسات وينسّق بين الشريط والنافذة |
+
+**بطاقة الطلب — الحالات الأربع:**
+- `قيد التجهيز` / `قيد الشحن` / `تم التوصيل`: خط سير من 3 خطوات مع تمييز المرحلة الحالية.
+- `ملغي`: وسم أحمر + تنبيه صريح بالإلغاء **بدل** خط سير نشط (لا معنى لمسار توصيل لطلب ملغي).
+
+**إيقاع مؤشر الكتابة (ChatWindow):** تأخير `700ms` قبل إظهار «سارة تكتب»، وأقل مدة عرض
+`400ms` (حتى لو ردّ الـ backend أسرع)، وإخفاء متدرّج `260ms` — بدل الظهور اللحظي.
+
+**الاقتراحات السريعة:** أربع رقائق فوق حقل الإدخال تُعبّئ الحقل وترسل مباشرة، وتُخفى
+أثناء توليد الرد.
+
+> **استمرارية بطاقة الطلب (مطبَّقة):** `order_details` تُحفظ مع رسالة الوكيل داخل عمود
+> **`chat_messages.metadata`** (سلسلة JSON)، و`GET /api/history/` يفكّها ويُرجعها في كل
+> رسالة ضمن `metadata` و`order_details`؛ فتُرسم البطاقة عند إعادة فتح الجلسة بنفس شكلها
+> في الدورة الحيّة. **ترحيل آمن:** `init_db` يفحص `PRAGMA table_info(chat_messages)`
+> وينفّذ `ALTER TABLE chat_messages ADD COLUMN metadata TEXT` عند غيابه (idempotent).
+
+### 13.4 استمرارية بطاقة الطلب عبر إعادة التحميل (Phase 8 — إغلاق)
+
+| الطبقة | التغيير |
+|---|---|
+| `schema.sql` | عمود `metadata TEXT` (nullable) في `chat_messages` |
+| `db.init_db` | ترحيل `ALTER TABLE ... ADD COLUMN metadata TEXT` عند غياب العمود |
+| `db.add_chat_message` | وسيط `metadata` يُسلسَل كـ JSON ويُخزَّن |
+| `db.get_chat_history` | يفكّ JSON ويُرجع `metadata` و`order_details` لكل رسالة (JSON تالف => `None` بلا إسقاط السجل) |
+| `app.py` | يحفظ `{"order_details": ...}` مع رسالة الوكيل عند وجود طلب |
+| `ChatWindow.jsx` | يوحّد شكل رسائل السجل مع رسائل الدورة الحيّة (`orderDetails`) فتظهر البطاقة بعد التحميل |

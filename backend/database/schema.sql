@@ -45,9 +45,23 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     session_id TEXT NOT NULL,
     sender TEXT NOT NULL CHECK (sender IN ('customer', 'agent')),
     content TEXT NOT NULL,
+    metadata TEXT, -- مخزن JSON لحِمولات منظّمة (مثل order_details) — Phase 8
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- مقاييس كل دورة محادثة — تُستخدم لاشتقاق حالة الجلسة في `/api/sessions`.
+-- إضافة من مرحلة تحسينات الواجهة (Phase 8)؛ الجدول إضافي ولا يمسّ الجداول القائمة.
+CREATE TABLE IF NOT EXISTS turn_outcomes (
+    outcome_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    low_confidence INTEGER NOT NULL DEFAULT 0,
+    tool_outcome TEXT NOT NULL DEFAULT 'none',
+    had_error INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_session ON tickets(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_outcomes_session ON turn_outcomes(session_id);
