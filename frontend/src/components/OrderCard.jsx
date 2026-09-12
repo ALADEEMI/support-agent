@@ -66,7 +66,9 @@ export default function OrderCard({ order }) {
             const state = index < activeIndex ? "is-done" : index === activeIndex ? "is-current" : "is-todo";
             return (
               <li key={step} className={`order-step ${state}`}>
-                <span className="order-step-dot" aria-hidden="true" />
+                <span className="order-step-dot" aria-hidden="true">
+                  {state === "is-done" ? "✓" : ""}
+                </span>
                 <span className="order-step-label">{step}</span>
               </li>
             );

@@ -1,11 +1,28 @@
-/* Phase 8 — هيكل التطبيق: شريط جانبي + نافذة محادثة.
-   الإطار الكحلي المتحرك صار على الهيكل العام، و«سطح» المحادثة يبقى فاتحاً. */
+/* Phase 9 — هيكل التطبيق: خلفية ليلية مع تدرّجات محيطية ناعمة للعمق.
+   البنية والصفوف كما هي (لا تغيير في التخطيط أو السلوك). */
 
 .app-shell {
+  position: relative;
   display: flex;
   align-items: stretch;
   min-height: 100vh;
-  background: linear-gradient(160deg, #0d1626, #1b2a4a 55%, #14203a);
+  overflow: hidden;
+  background:
+    radial-gradient(900px 600px at 12% -10%, rgba(16, 185, 129, 0.14), transparent 60%),
+    radial-gradient(800px 560px at 100% 0%, rgba(99, 102, 241, 0.16), transparent 62%),
+    radial-gradient(700px 520px at 50% 120%, rgba(34, 211, 238, 0.1), transparent 60%),
+    linear-gradient(160deg, #0b0f17 0%, #0f172a 55%, #0b1220 100%);
+}
+
+/* طبقة ناعمة إضافية للعمق (لا تعترض النقر أو التمرير) */
+.app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 26px 26px;
+  opacity: 0.5;
 }
 
 @media (max-width: 900px) {

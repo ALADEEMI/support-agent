@@ -211,11 +211,11 @@ export default function ChatWindow({ sessionId, onTurnComplete }) {
       <div className="chat-window">
         <header className="chat-header">
           <span className="chat-logo" aria-hidden="true">
-            ن
+            س
           </span>
           <div className="chat-brand-text">
             <h1>متجر النخبة</h1>
-            <span className="chat-subtitle">خدمة العملاء</span>
+            <span className="chat-subtitle">خدمة العملاء الآلية المتطورة</span>
           </div>
           <span className="chat-status">
             <span className="chat-status-dot" aria-hidden="true" />
@@ -285,8 +285,16 @@ export default function ChatWindow({ sessionId, onTurnComplete }) {
             placeholder="اكتب رسالتك هنا..."
             disabled={isLoading}
           />
-          <button type="submit" disabled={isLoading || !input.trim()}>
-            إرسال
+          <button type="submit" aria-label="إرسال" disabled={isLoading || !input.trim()}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M4 12l16-8-6.5 16-3-6.5L4 12z"
+                stroke="currentColor"
+                strokeWidth="1.9"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
         </form>
       </div>

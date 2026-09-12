@@ -652,3 +652,64 @@ memory = SqliteSaver(connection)
 | `db.get_chat_history` | يفكّ JSON ويُرجع `metadata` و`order_details` لكل رسالة (JSON تالف => `None` بلا إسقاط السجل) |
 | `app.py` | يحفظ `{"order_details": ...}` مع رسالة الوكيل عند وجود طلب |
 | `ChatWindow.jsx` | يوحّد شكل رسائل السجل مع رسائل الدورة الحيّة (`orderDetails`) فتظهر البطاقة بعد التحميل |
+
+## 14. نظام التصميم (Design System) — Phase 9
+
+### 14.1 الخط والأساس العام
+
+| العنصر | القيمة |
+|---|---|
+| الخط | `Readex Pro` من Google Fonts (أوزان 300/400/500/600/700) — يُحمَّل في `public/index.html` |
+| سلسلة الخط | `'Readex Pro', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` في `index.css` |
+| شريط التمرير | `::-webkit-scrollbar` بعرض `9px`، مقبض `rgba(148,163,184,0.28)` بحواف `999px` وخلفية شفافة، مع `scrollbar-width: thin` لفايرفوكس |
+
+### 14.2 لوحة الألوان (متغيّرات CSS في `index.css`)
+
+| الرمز | القيمة | الاستخدام |
+|---|---|---|
+| `--bg-0` | `#0B0F17` | خلفية الصفحة (Midnight) |
+| `--bg-1` | `#0F172A` | طبقات الأسطح |
+| `--glass` / `--glass-strong` | `rgba(30,41,59,0.7)` / `rgba(15,23,42,0.78)` | أسطح زجاجية |
+| `--border-glass` | `rgba(255,255,255,0.08)` | الحدود الرقيقة |
+| `--emerald` / `--emerald-deep` | `#10B981` / `#059669` | اللون المميز الأساسي |
+| `--cyan` | `#22D3EE` | تدرّج مساعد وتوهّج المرحلة النشطة |
+| `--amber` / `--rose` / `--slate-blue` | `#F59E0B` / `#F43F5E` / `#64748B` | حالات: تجهيز / إلغاء ومعلّقة / محادثة عامة |
+
+> **توافق خلفي:** أُبقيت رموز المرحلة 6 (`--elite-*`) كأسماء بديلة تشير إلى اللوحة الجديدة،
+> فلا ينكسر أي ملف CSS قديم يعتمد عليها.
+
+### 14.3 المكوّنات المرئية
+
+| المكوّن | التوصيف |
+|---|---|
+| `.app-shell` | ثلاث تدرّجات محيطية (زمردي/نيلي/سماوي) فوق `#0B0F17`، وطبقة نقاط شفافة `pointer-events: none` |
+| `.chat-window` | زجاج `rgba(15,23,42,0.78)` + `backdrop-filter: blur(18px)` + حد `rgba(255,255,255,0.08)` + ظل عميق |
+| `.chat-header` | صورة رمزية دائرية بتدرّج زمردي→سماوي، العنوان «متجر النخبة»، عنوان فرعي «خدمة العملاء الآلية المتطورة»، ونقطة اتصال نابضة (`@keyframes pulse`) |
+| `.chat-bubble-customer` | تدرّج `#059669 → #10B981`، نص أبيض، حواف `1.25rem 1.25rem 0.25rem 1.25rem` |
+| `.chat-bubble-agent` | `rgba(30,41,59,0.82)` + حد رقيق + `backdrop-filter: blur(10px)` |
+| `.chat-row` | دخول `@keyframes slideUpFade` بمدة `280ms ease-out` |
+| `.chat-typing` | كبسولة زجاجية عائمة + هالة `box-shadow` + ثلاث نقاط `@keyframes bouncePulse` |
+| `.chat-chip` | كبسولة شبه شفافة، رفع `translateY(-2px)` عند المرور، وضغط `scale(0.96)` |
+| `.chat-form input` | حواف `999px` + حلقة تركيز `0 0 0 2px rgba(16,185,129,0.3)` |
+| `.chat-form button` | أيقونة ورقية دائرية بتدرّج زمردي→سماوي مع رفع ودوران عند المرور |
+| `.order-card` | ودجت تتبّع تنفيذي: مسار متدرّج متوهّج، عقد دائرية (علامة ✓ للمُنجَز، حلقة نابضة `@keyframes nodePulse` للحيّ، نقطة باهتة للقادم) |
+| `.order-pill-*` | توهّج حسب الحالة: زمردي (تم التوصيل)، سماوي (قيد الشحن)، عنبري (قيد التجهيز)، قرمزي (ملغي) |
+| `.order-cancelled-alert` | بطاقة تحذير بزجاج قرمزي `rgba(239,68,68,0.1)` وحد أحمر |
+| `.sidebar-new` | زر متدرّج بارز مع توهّج عند المرور وضغط `scale(0.97)` |
+| `.sidebar-item` | سطح `rgba(255,255,255,0.025)` يتحوّل إلى `rgba(255,255,255,0.04)` عند المرور، ومؤشر رأسي متوهّج للجلسة النشطة على حافة البداية (اليمين في RTL) عبر `inset-inline-start` |
+| `.session-badge-*` | وسم كبسولة بنقطة ملوّنة: زمردي `resolved`، عنبري `escalated`، وردي `unresolved`، نيلي `active` |
+
+### 14.4 قيود عدم الانحدار (Non-Regression Contract)
+
+1. **أسماء الأصناف لم تتغيّر**: كل أصناف DOM المستخدمة في منطق التطبيق أو في فحوص
+   المتصفح (`order-card`, `order-pill`, `order-step`, `order-step.is-current .order-step-label`,
+   `order-cancelled-alert`, `sidebar-item`, `session-badge`, `chat-chip`, `chat-bubble`, …)
+   باقية كما هي — والتغيير كله في CSS + عناصر تجميلية مضافة (علامة ✓، أيقونة الإرسال،
+   العنوان الفرعي). علامة ✓ داخل `.order-step-dot` لا تمسّ نص `.order-step-label`.
+2. **عقود الخصائص (Props) لم تتغيّر**: `App.jsx → ChatSidebar/ChatWindow → OrderCard`
+   (`sessionId`, `messages`, `activeSessionId`, `onSelectSession`, `onNewChat`, `sendMessage`,
+   `loading`, `orderDetails`) كما هي.
+3. **مفاتيح الحمولة (Payload) لم تتغيّر**: `order_details`, `session_id`, `metadata` وغيرها
+   بلا أي تعديل، ولم تُمسّ استمرارية البطاقة الموصوفة في 13.4.
+4. **`prefers-reduced-motion`**: كل الحركات (النقطة النابضة، دخول الرسائل، نقاط الكتابة،
+   عقدة المرحلة النشطة) تُلغى عند طلب المستخدم تقليل الحركة.

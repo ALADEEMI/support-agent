@@ -1,63 +1,71 @@
-/* Phase 8 — الشريط الجانبي لسجل المحادثات.
-   كحلي داكن مع تمييز ذهبي، ووسوم حالة بألوان صريحة (أخضر/برتقالي/أحمر/رمادي). */
+/* Phase 9 — الشريط الجانبي: زجاج داكن، زر متدرّج، ووسوم حالة متوهّجة.
+   أسماء الأصناف محفوظة كما هي. */
 
 .sidebar {
-  flex: 0 0 290px;
-  max-width: 290px;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 300px;
+  max-width: 300px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 18px 14px;
-  background: linear-gradient(180deg, rgba(13, 22, 38, 0.96), rgba(20, 32, 58, 0.96));
-  border-inline-end: 1px solid rgba(201, 169, 97, 0.32);
-  color: var(--elite-cream, #f7f5f0);
+  gap: 14px;
+  padding: 20px 16px;
+  color: var(--text-1);
+  background: linear-gradient(180deg, rgba(11, 15, 23, 0.92), rgba(15, 23, 42, 0.86));
+  backdrop-filter: blur(16px);
+  border-inline-end: 1px solid var(--border-glass);
   overflow: hidden;
 }
 
 .sidebar-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
 }
 
 .sidebar-logo {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  border: 1.5px solid var(--elite-gold, #c9a961);
-  color: var(--elite-gold, #c9a961);
-  background: rgba(201, 169, 97, 0.12);
+  border-radius: 12px;
+  font-size: 17px;
   font-weight: 700;
+  color: #04121a;
+  background: linear-gradient(145deg, var(--emerald), var(--cyan));
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25), 0 6px 18px rgba(16, 185, 129, 0.3);
 }
 
 .sidebar-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 15.5px;
   font-weight: 700;
   letter-spacing: 0.2px;
 }
 
+/* زر «محادثة جديدة»: متدرّج بارز مع توهّج عند المرور */
 .sidebar-new {
-  padding: 11px 14px;
+  padding: 12px 16px;
   font-family: inherit;
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 700;
-  color: var(--elite-navy, #1b2a4a);
-  background: linear-gradient(180deg, var(--elite-gold-bright, #e0c583), var(--elite-gold, #c9a961));
-  border: 1px solid rgba(201, 169, 97, 0.9);
-  border-radius: 12px;
+  color: #04121a;
+  background: linear-gradient(145deg, var(--emerald), var(--cyan));
+  border: none;
+  border-radius: 14px;
   cursor: pointer;
-  transition: filter 0.18s ease, transform 0.12s ease;
+  box-shadow: 0 10px 26px rgba(16, 185, 129, 0.28);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
 }
 
 .sidebar-new:hover {
+  transform: translateY(-2px);
   filter: brightness(1.06);
+  box-shadow: 0 14px 34px rgba(16, 185, 129, 0.42);
 }
 
 .sidebar-new:active {
-  transform: translateY(1px);
+  transform: scale(0.97);
 }
 
 .sidebar-list {
@@ -65,59 +73,74 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-inline-end: 2px;
+  gap: 9px;
+  padding-inline-end: 3px;
 }
 
 .sidebar-empty {
-  margin: 12px 4px;
-  font-size: 13px;
-  line-height: 1.9;
-  color: rgba(247, 245, 240, 0.62);
+  margin: 14px 4px;
+  font-size: 12.5px;
+  line-height: 2;
+  color: var(--text-2);
 }
 
-/* ---------- عنصر جلسة ---------- */
+/* ---------- بطاقة جلسة ---------- */
 
 .sidebar-item {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   width: 100%;
-  padding: 10px 11px;
+  padding: 11px 12px;
   text-align: start;
   font-family: inherit;
   color: inherit;
-  background: rgba(247, 245, 240, 0.06);
-  border: 1px solid rgba(201, 169, 97, 0.22);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-glass);
+  border-radius: 13px;
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.16s ease;
 }
 
 .sidebar-item:hover {
-  background: rgba(247, 245, 240, 0.11);
-  border-color: rgba(201, 169, 97, 0.45);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border-glass-strong);
+  transform: translateY(-1px);
 }
 
+/* مؤشر الجلسة النشطة: شريط متوهّج على حافة البداية (اليمين في RTL) */
 .sidebar-item.is-active {
-  background: rgba(201, 169, 97, 0.16);
-  border-color: var(--elite-gold, #c9a961);
-  box-shadow: inset 3px 0 0 0 var(--elite-gold, #c9a961);
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 18px rgba(16, 185, 129, 0.16);
+}
+
+.sidebar-item.is-active::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -1px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--emerald), var(--cyan));
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.7);
 }
 
 .sidebar-item-top {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
   justify-content: space-between;
+  gap: 8px;
 }
 
 .sidebar-item-title {
   flex: 1;
-  font-size: 13.5px;
-  font-weight: 700;
-  line-height: 1.6;
-  color: #fdfbf6;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.65;
+  color: var(--text-1);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 1;
@@ -125,9 +148,9 @@
 }
 
 .sidebar-item-snippet {
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: rgba(247, 245, 240, 0.68);
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--text-2);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -138,44 +161,56 @@
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11.5px;
-  color: rgba(247, 245, 240, 0.55);
+  font-size: 10.5px;
+  color: var(--text-3);
 }
 
-/* ---------- وسوم الحالة ---------- */
+/* ---------- وسوم الحالة: نقطة ملوّنة + توهّج ---------- */
 
 .session-badge {
   flex: 0 0 auto;
-  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   white-space: nowrap;
   border: 1px solid transparent;
 }
 
+.session-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+
 .session-badge-resolved {
-  color: #0f5132;
-  background: #d3f2de;
-  border-color: #7fd0a0;
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.13);
+  border-color: rgba(16, 185, 129, 0.5);
 }
 
 .session-badge-escalated {
-  color: #7a4100;
-  background: #ffe6c7;
-  border-color: #f0b46b;
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.13);
+  border-color: rgba(245, 158, 11, 0.5);
 }
 
 .session-badge-unresolved {
-  color: #7d1f19;
-  background: #fbd9d6;
-  border-color: #e3928a;
+  color: #fda4af;
+  background: rgba(244, 63, 94, 0.13);
+  border-color: rgba(244, 63, 94, 0.5);
 }
 
 .session-badge-active {
-  color: #334155;
-  background: #e6eaf2;
-  border-color: #b9c3d6;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.13);
+  border-color: rgba(99, 102, 241, 0.5);
 }
 
 @media (max-width: 900px) {
@@ -183,7 +218,7 @@
     flex: 0 0 auto;
     max-width: none;
     border-inline-end: none;
-    border-bottom: 1px solid rgba(201, 169, 97, 0.32);
+    border-bottom: 1px solid var(--border-glass);
   }
 
   .sidebar-list {
